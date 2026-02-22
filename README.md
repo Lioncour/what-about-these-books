@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# What About This Book?
+
+A desktop app that lets you upload books and chat with AI about their contents. Runs 100% locally — no API keys, no internet, no costs.
+
+## How It Works
+
+1. Upload a book (PDF, EPUB, or TXT)
+2. The app extracts text, chunks it, and builds a searchable index using AI embeddings
+3. Ask questions — the app finds relevant passages and sends them to a local AI model
+4. Get streaming answers that reference specific parts of the book
+
+## Prerequisites
+
+### Ollama
+
+This app uses [Ollama](https://ollama.com/) to run AI models locally.
+
+1. Install Ollama: `irm https://ollama.com/install.ps1 | iex` (Windows PowerShell)
+2. Pull the models:
+
+```bash
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+```
+
+Make sure Ollama is running before launching the app.
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run electron:dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This starts the Next.js server and opens the Electron desktop window.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Next.js dev server only (browser at localhost:3000) |
+| `npm run electron:dev` | Start Next.js + Electron window |
+| `npm run build` | Build for production |
+| `npm run electron:start` | Launch Electron (requires built Next.js) |
 
-## Learn More
+## Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- [Electron](https://www.electronjs.org/) — Desktop window
+- [Next.js](https://nextjs.org/) — Web framework (UI + API routes)
+- [Tailwind CSS](https://tailwindcss.com/) — Styling
+- [Ollama](https://ollama.com/) — Local AI (Llama 3.1 8B for chat, nomic-embed-text for embeddings)
+- [Vectra](https://github.com/Stevenic/vectra) — Local vector store for book search
+- [unpdf](https://github.com/unjs/unpdf) — PDF text extraction
+- [epub2](https://github.com/nickhsharp/epub2) — EPUB text extraction
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Data Storage
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All data is stored locally at `~/.whataboutthisbook/`:
+- `books.json` — Book catalog (titles, metadata)
+- `index/` — Vector embeddings for book search

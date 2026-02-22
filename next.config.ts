@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["epub2", "vectra", "ollama"],
 };
 
 export default nextConfig;
