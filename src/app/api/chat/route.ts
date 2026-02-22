@@ -42,6 +42,12 @@ export async function POST(request: NextRequest) {
         try {
           let systemPrompt: string;
 
+          interface Source {
+            book: string;
+            excerpt: string;
+          }
+          const sources: Source[] = [];
+
           if (bookId === "all") {
             send("STATUS", "Searching across your entire library...");
 
@@ -59,13 +65,21 @@ export async function POST(request: NextRequest) {
 
             const context = passages.length
               ? passages
-                  .map((p) => `[From "${p.bookTitle}"]\n${p.text}`)
+                  .map((p, i) => {
+                    sources.push({
+                      book: p.bookTitle,
+                      excerpt: p.text.slice(0, 120).replace(/\s+/g, " ").trim(),
+                    });
+                    return `[Passage ${i + 1} — from "${p.bookTitle}"]\n${p.text}`;
+                  })
                   .join("\n\n---\n\n")
               : "(No relevant passages found across your library.)";
 
             systemPrompt = `You are a helpful book assistant. The user has a library of books and wants to ask questions across all of them.
 
-Answer questions accurately based on the relevant passages provided below. Always mention which book a piece of information comes from. Be conversational but precise.
+IMPORTANT: You MUST cite your sources. When you use information from a passage, reference it like this: (Passage 1, "Book Title"). Always tell the user which book the information comes from.
+
+Answer questions accurately based ONLY on the provided passages. Be conversational but precise.
 
 If the passages don't contain enough information to answer the question, say so honestly.
 
@@ -84,16 +98,26 @@ ${context}`;
             }
 
             const context = relevantChunks.length
-              ? relevantChunks.join("\n\n---\n\n")
+              ? relevantChunks
+                  .map((text, i) => {
+                    sources.push({
+                      book: bookTitle,
+                      excerpt: text.slice(0, 120).replace(/\s+/g, " ").trim(),
+                    });
+                    return `[Passage ${i + 1}]\n${text}`;
+                  })
+                  .join("\n\n---\n\n")
               : "(No relevant passages found for this question.)";
 
             systemPrompt = `You are a helpful book assistant. The user has uploaded a book titled "${bookTitle}" and wants to discuss it with you.
 
-Answer questions accurately based on the relevant passages provided below. Reference specific parts when helpful. Be conversational but precise.
+IMPORTANT: You MUST cite your sources. When you use information from a passage, reference it like this: (Passage 1). This helps the user find the relevant section in their book.
+
+Answer questions accurately based ONLY on the provided passages. Be conversational but precise.
 
 If the passages don't contain enough information to answer the question, say so honestly.
 
-Relevant passages from the book:
+Relevant passages from "${bookTitle}":
 
 ${context}`;
           }
@@ -124,6 +148,10 @@ ${context}`;
               }
               controller.enqueue(encoder.encode(`TEXT:${text}\n`));
             }
+          }
+
+          if (sources.length) {
+            send("SOURCES", JSON.stringify(sources));
           }
 
           controller.close();

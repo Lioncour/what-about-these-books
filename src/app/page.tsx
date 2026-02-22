@@ -4,9 +4,71 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import UploadArea from "@/components/UploadArea";
 import BookLibrary, { BookLibraryHandle } from "@/components/BookLibrary";
 
+interface Source {
+  book: string;
+  excerpt: string;
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
+  sources?: Source[];
+}
+
+function SourcesList({ sources }: { sources: Source[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const uniqueBooks = [...new Set(sources.map((s) => s.book))];
+
+  return (
+    <div className="rounded-xl border border-border bg-background px-3 py-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 text-xs text-muted transition-colors hover:text-foreground"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+        </svg>
+        <span className="font-medium">
+          {sources.length} source{sources.length !== 1 ? "s" : ""} from{" "}
+          {uniqueBooks.length === 1
+            ? `"${uniqueBooks[0]}"`
+            : `${uniqueBooks.length} books`}
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`ml-auto transition-transform ${expanded ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-2 border-t border-border pt-2">
+          {sources.map((source, i) => (
+            <div key={i} className="text-xs">
+              <div className="flex items-center gap-1.5 font-medium text-foreground">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-bold text-primary">
+                  {i + 1}
+                </span>
+                {source.book}
+              </div>
+              <p className="mt-0.5 pl-[22px] text-muted leading-relaxed">
+                &ldquo;{source.excerpt}...&rdquo;
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -101,6 +163,18 @@ export default function Home() {
                 };
                 return updated;
               });
+            } else if (type === "SOURCES") {
+              try {
+                const parsed = JSON.parse(data) as Source[];
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    sources: parsed,
+                  };
+                  return updated;
+                });
+              } catch { /* ignore parse errors */ }
             } else if (type === "ERROR") {
               throw new Error(data);
             }
@@ -280,21 +354,26 @@ export default function Home() {
             {messages.map((message, i) => {
               const isUser = message.role === "user";
               return (
-                <div
-                  key={i}
-                  className={`animate-fade-in flex ${isUser ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`
-                      max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed
-                      ${isUser
-                        ? "bg-user-bubble text-white"
-                        : "bg-surface border border-border text-foreground"
-                      }
-                    `}
-                  >
-                    <div className="whitespace-pre-wrap">{message.content}</div>
+                <div key={i} className="animate-fade-in">
+                  <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`
+                        max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed
+                        ${isUser
+                          ? "bg-user-bubble text-white"
+                          : "bg-surface border border-border text-foreground"
+                        }
+                      `}
+                    >
+                      <div className="whitespace-pre-wrap">{message.content}</div>
+                    </div>
                   </div>
+
+                  {message.sources && message.sources.length > 0 && (
+                    <div className="mt-2 ml-0">
+                      <SourcesList sources={message.sources} />
+                    </div>
+                  )}
                 </div>
               );
             })}
