@@ -15,13 +15,15 @@ interface FileJob {
   steps: string[];
   error?: string;
   result?: { id: string; title: string; wordCount: number };
+  abortController?: AbortController;
 }
 
 let jobIdCounter = 0;
 
 async function processOneFile(
   file: File,
-  onProgress: (step: string) => void
+  onProgress: (step: string) => void,
+  signal?: AbortSignal
 ): Promise<{ id: string; title: string; wordCount: number }> {
   const formData = new FormData();
   formData.append("file", file);
@@ -29,6 +31,7 @@ async function processOneFile(
   const response = await fetch("/api/extract", {
     method: "POST",
     body: formData,
+    signal,
   });
 
   const reader = response.body?.getReader();
@@ -38,6 +41,11 @@ async function processOneFile(
   if (!reader) throw new Error("No response stream");
 
   while (true) {
+    if (signal?.aborted) {
+      await reader.cancel();
+      throw new Error("Skipped by user");
+    }
+
     const { done, value } = await reader.read();
     if (done) break;
 
@@ -89,7 +97,9 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
       if (!next) break;
 
       next.status = "processing";
-      updateJob(next.id, { status: "processing", steps: ["Starting..."] });
+      const abortController = new AbortController();
+      next.abortController = abortController;
+      updateJob(next.id, { status: "processing", steps: ["Starting..."], abortController });
 
       try {
         const result = await processOneFile(
@@ -97,7 +107,8 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
           (step) => {
             next.steps = [...next.steps, step];
             updateJob(next.id, { steps: [...next.steps] });
-          }
+          },
+          abortController.signal
         );
 
         next.status = "done";
@@ -184,6 +195,13 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
     [onBookLoaded]
   );
 
+  const skipJob = useCallback((jobId: number) => {
+    const job = queueRef.current.find((j) => j.id === jobId);
+    if (job?.abortController) {
+      job.abortController.abort();
+    }
+  }, []);
+
   const clearDone = useCallback(() => {
     const remaining = jobs.filter((j) => j.status !== "done" && j.status !== "error");
     setJobs(remaining);
@@ -265,9 +283,17 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                   </span>
                 </div>
                 {job.status === "processing" && job.steps.length > 0 && (
-                  <p className="mt-1 truncate text-[11px] text-muted">
-                    {job.steps[job.steps.length - 1]}
-                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="flex-1 truncate text-[11px] text-muted">
+                      {job.steps[job.steps.length - 1]}
+                    </p>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); skipJob(job.id); }}
+                      className="shrink-0 text-[10px] font-medium text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Skip
+                    </button>
+                  </div>
                 )}
                 {job.status === "error" && job.error && (
                   <p className="mt-1 text-[11px] text-red-500">{job.error}</p>
@@ -399,6 +425,12 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                         </div>
                       );
                     })}
+                    <button
+                      onClick={() => skipJob(job.id)}
+                      className="mt-1 text-xs font-medium text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Skip this book
+                    </button>
                   </div>
                 )}
 

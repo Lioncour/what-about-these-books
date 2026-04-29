@@ -7,6 +7,13 @@ export async function GET() {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (process.env.PUBLIC_MODE === "true") {
+    return NextResponse.json(
+      { error: "Deleting books is disabled in public mode." },
+      { status: 403 }
+    );
+  }
+
   try {
     const { bookId } = await request.json();
     if (!bookId) {

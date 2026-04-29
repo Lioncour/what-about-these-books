@@ -8,16 +8,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "eval:harness": "node scripts/run-eval.mjs",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "npm run build && electron-builder",
     "electron:start": "electron ."
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1038.0",
     "epub2": "^3.0.2",
     "next": "16.1.6",
-    "ollama": "^0.6.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "unpdf": "^1.4.0",
     "vectra": "^0.12.3"
   },

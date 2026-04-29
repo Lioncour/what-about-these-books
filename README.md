@@ -1,6 +1,6 @@
 # What About This Book?
 
-A desktop app that lets you upload books and chat with AI about their contents. Runs 100% locally — no API keys, no internet, no costs.
+A desktop app that lets you upload books and chat with AI about their contents using AWS Bedrock (Claude + Bedrock embeddings).
 
 ## How It Works
 
@@ -11,19 +11,8 @@ A desktop app that lets you upload books and chat with AI about their contents. 
 
 ## Prerequisites
 
-### Ollama
-
-This app uses [Ollama](https://ollama.com/) to run AI models locally.
-
-1. Install Ollama: `irm https://ollama.com/install.ps1 | iex` (Windows PowerShell)
-2. Pull the models:
-
-```bash
-ollama pull llama3.1:8b
-ollama pull nomic-embed-text
-```
-
-Make sure Ollama is running before launching the app.
+- AWS CLI with SSO login/profile configured for Bedrock access
+- Bedrock model access enabled for your Claude model + embedding model
 
 ## Getting Started
 
@@ -48,10 +37,22 @@ This starts the Next.js server and opens the Electron desktop window.
 - [Electron](https://www.electronjs.org/) — Desktop window
 - [Next.js](https://nextjs.org/) — Web framework (UI + API routes)
 - [Tailwind CSS](https://tailwindcss.com/) — Styling
-- [Ollama](https://ollama.com/) — Local AI (Llama 3.1 8B for chat, nomic-embed-text for embeddings)
+- [AWS Bedrock](https://aws.amazon.com/bedrock/) — Claude responses + Titan embeddings
 - [Vectra](https://github.com/Stevenic/vectra) — Local vector store for book search
 - [unpdf](https://github.com/unjs/unpdf) — PDF text extraction
 - [epub2](https://github.com/nickhsharp/epub2) — EPUB text extraction
+
+## Major Features
+
+- Specialist quality controls with scorecards and low-confidence auto re-ask
+- Grounded answer mode (strict citation enforcement)
+- Entity graph + timeline extraction and conflict checks
+- Re-index manager with background rebuild status
+- Advanced search filters and saved searches
+- Evaluation harness (`npm run eval:harness`)
+- Sharing snapshots (read-only links with scope and redaction)
+- Data safety tools (backup/restore, integrity checks, migration logs)
+- Model routing controls (specialist/orchestrator/extraction model IDs)
 
 ## Data Storage
 

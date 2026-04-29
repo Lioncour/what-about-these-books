@@ -1,0 +1,12 @@
+[
+  {
+    "id": "expeditionary-deaths",
+    "question": "Who dies in the expeditionary force books with citations?",
+    "expectedCitationContains": ["Page", "Chapter"]
+  },
+  {
+    "id": "skippy-mentions",
+    "question": "Where is Skippy mentioned?",
+    "expectedCitationContains": ["Skippy"]
+  }
+]

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, dialog } = require("electron");
-const { spawn, execSync } = require("child_process");
+const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
 
@@ -33,16 +33,6 @@ function waitForServer(url, timeout = 30000) {
   });
 }
 
-function isOllamaRunning() {
-  return new Promise((resolve) => {
-    http
-      .get("http://127.0.0.1:11434/api/tags", (res) => {
-        resolve(res.statusCode === 200);
-      })
-      .on("error", () => resolve(false));
-  });
-}
-
 function createWindow() {
   Menu.setApplicationMenu(null);
 
@@ -72,16 +62,6 @@ function createWindow() {
 }
 
 async function startApp() {
-  const ollamaRunning = await isOllamaRunning();
-  if (!ollamaRunning) {
-    dialog.showErrorBox(
-      "Ollama not running",
-      'Please start Ollama before launching this app.\n\nOpen the Ollama application, or run "ollama serve" in a terminal.'
-    );
-    app.quit();
-    return;
-  }
-
   if (DEV) {
     await waitForServer(`http://localhost:${PORT}`).catch(() => {
       dialog.showErrorBox(

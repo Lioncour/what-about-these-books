@@ -1,21 +1,44 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import UploadArea from "@/components/UploadArea";
 import BookLibrary, { BookLibraryHandle } from "@/components/BookLibrary";
 
 interface Source {
   book: string;
   excerpt: string;
+  position?: string;
+}
+
+interface SpecialistReport {
+  bookTitle: string;
+  confidence: "high" | "medium" | "low";
+  numericEstimate: number | null;
+  directAnswer: string;
+  findingsCount: number;
+  topFindings: { finding: string; location: string }[];
+  caveats: string[];
+  reasked?: boolean;
+  scorecard?: { precisionEstimate: number; recallEstimate: number; total: number };
+}
+
+interface WhyInfo {
+  groundedMode: boolean;
+  sourceCount: number;
+  specialistModelId: string;
+  orchestratorModelId: string;
 }
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  specialists?: SpecialistReport[];
+  why?: WhyInfo;
 }
 
-function SourcesList({ sources }: { sources: Source[] }) {
+function SourcesList({ sources, onCitationClick }: { sources: Source[]; onCitationClick?: (source: Source) => void }) {
   const [expanded, setExpanded] = useState(false);
   const uniqueBooks = [...new Set(sources.map((s) => s.book))];
 
@@ -58,17 +81,149 @@ function SourcesList({ sources }: { sources: Source[] }) {
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-bold text-primary">
                   {i + 1}
                 </span>
-                {source.book}
+                <span className="flex-1 truncate">{source.book}</span>
+                {source.position && (
+                  <span className="shrink-0 rounded bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted">
+                    {source.position}
+                  </span>
+                )}
               </div>
-              <p className="mt-0.5 pl-[22px] text-muted leading-relaxed">
+              <button
+                onClick={() => onCitationClick?.(source)}
+                className="mt-0.5 pl-[22px] text-left text-muted leading-relaxed hover:text-foreground"
+              >
                 &ldquo;{source.excerpt}...&rdquo;
-              </p>
+              </button>
             </div>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+function SpecialistReportsList({ reports }: { reports: SpecialistReport[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const high = reports.filter((r) => r.confidence === "high").length;
+  const med = reports.filter((r) => r.confidence === "medium").length;
+  const low = reports.filter((r) => r.confidence === "low").length;
+
+  return (
+    <div className="rounded-xl border border-border bg-background px-3 py-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 text-xs text-muted transition-colors hover:text-foreground"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2v20" />
+          <path d="M2 12h20" />
+        </svg>
+        <span className="font-medium">
+          Specialist reports: {reports.length} (high {high}, medium {med}, low {low})
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`ml-auto transition-transform ${expanded ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-2 border-t border-border pt-2">
+          {reports.map((r) => (
+            <div key={r.bookTitle} className="rounded-lg border border-border bg-surface px-2 py-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-foreground">{r.bookTitle}</span>
+                <span className={`rounded px-1.5 py-0.5 text-[10px] ${
+                  r.confidence === "high"
+                    ? "bg-green-500/15 text-green-600 dark:text-green-400"
+                    : r.confidence === "medium"
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      : "bg-red-500/15 text-red-600 dark:text-red-400"
+                }`}>
+                  {r.confidence}
+                </span>
+                {r.numericEstimate !== null && (
+                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                    estimate: {r.numericEstimate}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-muted">{r.directAnswer}</p>
+              {r.reasked && <p className="mt-1 text-[11px] text-amber-500">Auto re-asked specialist due to low confidence.</p>}
+              {r.scorecard && (
+                <p className="mt-1 text-[11px] text-muted">
+                  QA scorecard: precision {r.scorecard.precisionEstimate}, recall {r.scorecard.recallEstimate}, n={r.scorecard.total}
+                </p>
+              )}
+              {r.topFindings.length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-muted">
+                  {r.topFindings.map((f, i) => (
+                    <li key={i}>
+                      - {f.finding} <span className="text-[10px]">({f.location})</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {r.caveats.length > 0 && (
+                <p className="mt-1 text-[11px] text-muted">Caveats: {r.caveats.join("; ")}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WhyPanel({ why }: { why: WhyInfo }) {
+  return (
+    <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted">
+      <p className="font-medium text-foreground">Why this answer</p>
+      <p>Grounded mode: {why.groundedMode ? "strict" : "off"}</p>
+      <p>Sources used: {why.sourceCount}</p>
+      <p>Specialist model: {why.specialistModelId}</p>
+      <p>Orchestrator model: {why.orchestratorModelId}</p>
+    </div>
+  );
+}
+
+interface ChatSummary {
+  id: string;
+  bookId: string;
+  bookTitle: string;
+  title: string;
+  updatedAt: string;
+}
+
+interface AISettings {
+  language: string;
+  tone: string;
+  customInstructions: string;
+  focusAreas: string[];
+  groundedMode?: boolean;
+  modelRouting?: {
+    specialistModelId?: string;
+    orchestratorModelId?: string;
+    extractionModelId?: string;
+  };
+}
+
+interface BuildInfo {
+  version: string;
+  displayVersion: string;
+  buildId: string;
+  latestLabel?: string;
+  startedAt: string;
 }
 
 export default function Home() {
@@ -78,9 +233,86 @@ export default function Home() {
   const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
   const [focusBookId, setFocusBookId] = useState<string | null>(null);
   const [focusBookTitle, setFocusBookTitle] = useState<string | null>(null);
+  const [publicMode, setPublicMode] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatSummary[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
+  const [focusAreaInput, setFocusAreaInput] = useState("");
+  const [settings, setSettings] = useState<AISettings>({
+    language: "Auto",
+    tone: "Scientific",
+    customInstructions: "",
+    focusAreas: [],
+    groundedMode: false,
+    modelRouting: {},
+  });
   const libraryRef = useRef<BookLibraryHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((data) => setPublicMode(data.publicMode))
+      .catch(() => {});
+
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) =>
+        setSettings({
+          language: data.language || "Auto",
+          tone: data.tone || "Scientific",
+          customInstructions: data.customInstructions || "",
+          focusAreas: Array.isArray(data.focusAreas) ? data.focusAreas : [],
+          groundedMode: Boolean(data.groundedMode),
+          modelRouting: data.modelRouting || {},
+        })
+      )
+      .catch(() => {});
+
+    fetch("/api/build-info")
+      .then((r) => r.json())
+      .then((data) =>
+        setBuildInfo({
+          version: data.version || "0.0.0",
+          displayVersion: data.displayVersion || "v0,00",
+          buildId: data.buildId || "v0.0.0-b0000000000",
+          latestLabel: data.latestLabel || "",
+          startedAt: data.startedAt || "",
+        })
+      )
+      .catch(() => {});
+
+  }, []);
+
+  const saveSettings = useCallback(async () => {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    setSettingsOpen(false);
+  }, [settings]);
+
+  const addFocusArea = useCallback(() => {
+    const value = focusAreaInput.trim();
+    if (!value) return;
+    if (settings.focusAreas.includes(value)) return;
+    setSettings((prev) => ({ ...prev, focusAreas: [...prev.focusAreas, value] }));
+    setFocusAreaInput("");
+  }, [focusAreaInput, settings.focusAreas]);
+
+  const refreshChatHistory = useCallback(() => {
+    fetch("/api/chats")
+      .then((r) => r.json())
+      .then((data) => setChatHistory(data.chats || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshChatHistory();
+  }, [refreshChatHistory]);
 
   const scrollToMessages = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -140,9 +372,23 @@ export default function Home() {
           streamBuffer = lines.pop() || "";
 
           for (const line of lines) {
-            if (!line) continue;
             const colonIdx = line.indexOf(":");
-            if (colonIdx === -1) continue;
+            if (colonIdx === -1) {
+              // Multiline TEXT payloads can arrive as continuation lines without a prefix.
+              // Treat those lines as assistant text instead of dropping them.
+              if (addedAssistantMessage) {
+                assistantContent += `\n${line}`;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    role: "assistant",
+                    content: assistantContent,
+                  };
+                  return updated;
+                });
+              }
+              continue;
+            }
 
             const type = line.slice(0, colonIdx);
             const data = line.slice(colonIdx + 1);
@@ -175,6 +421,30 @@ export default function Home() {
                   return updated;
                 });
               } catch { /* ignore parse errors */ }
+            } else if (type === "SPECIALISTS") {
+              try {
+                const parsed = JSON.parse(data) as SpecialistReport[];
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    specialists: parsed,
+                  };
+                  return updated;
+                });
+              } catch { /* ignore parse errors */ }
+            } else if (type === "WHY") {
+              try {
+                const parsed = JSON.parse(data) as WhyInfo;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    why: parsed,
+                  };
+                  return updated;
+                });
+              } catch { /* ignore parse errors */ }
             } else if (type === "ERROR") {
               throw new Error(data);
             }
@@ -200,7 +470,33 @@ export default function Home() {
       setIsLoading(false);
       setThinkingSteps([]);
     }
-  }, [input, isLoading, messages, focusBookId, focusBookTitle]);
+  }, [input, isLoading, messages, focusBookId, focusBookTitle, chatId]);
+
+  useEffect(() => {
+    if (messages.length < 2) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.role !== "assistant" || !lastMsg.content) return;
+
+    const id = chatId || `chat-${Date.now()}`;
+    if (!chatId) setChatId(id);
+
+    const title = messages[0].content.slice(0, 60);
+    const bookId = focusBookId || "all";
+    const bookTitle = focusBookTitle || "All Books";
+
+    fetch("/api/chats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        bookId,
+        bookTitle,
+        title,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        updatedAt: new Date().toISOString(),
+      }),
+    }).then(() => refreshChatHistory()).catch(() => {});
+  }, [messages, chatId, focusBookId, focusBookTitle, refreshChatHistory]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -229,6 +525,7 @@ export default function Home() {
         setFocusBookTitle(book.title);
       }
       setMessages([]);
+      setChatId(null);
       textareaRef.current?.focus();
     },
     [focusBookId]
@@ -238,6 +535,31 @@ export default function Home() {
     setFocusBookId(null);
     setFocusBookTitle(null);
     setMessages([]);
+    setChatId(null);
+  }, []);
+
+  const loadChatById = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/chats?id=${id}`);
+      const data = await res.json();
+      if (data.messages) {
+        setChatId(data.id);
+        setMessages(data.messages);
+        if (data.bookId && data.bookId !== "all") {
+          setFocusBookId(data.bookId);
+          setFocusBookTitle(data.bookTitle);
+        } else {
+          setFocusBookId(null);
+          setFocusBookTitle(null);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    setMessages([]);
+    setChatId(null);
+    textareaRef.current?.focus();
   }, []);
 
   const handleBooksChanged = useCallback(() => {
@@ -260,21 +582,84 @@ export default function Home() {
             <h1 className="text-sm font-bold leading-tight tracking-tight">What About This Book?</h1>
             <p className="text-[11px] text-muted">AI-powered book companion</p>
           </div>
+          {buildInfo && (
+            <div
+              className="rounded-full border border-primary/50 bg-primary/20 px-3 py-1 text-[11px] font-extrabold tracking-wide text-primary"
+              title={
+                buildInfo.startedAt
+                  ? `${buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version} • ${buildInfo.buildId}`}\nStarted: ${new Date(buildInfo.startedAt).toLocaleString()}`
+                  : buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version} • ${buildInfo.buildId}`
+              }
+            >
+              {buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version}`}
+            </div>
+          )}
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="ml-auto rounded-lg border border-border p-2 text-muted transition-colors hover:text-foreground"
+            title="AI settings"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-1.94 1.5l-.17.7a2 2 0 0 1-1.45 1.45l-.7.17a2 2 0 0 0-1.5 1.94v.44a2 2 0 0 0 1.5 1.94l.7.17a2 2 0 0 1 1.45 1.45l.17.7a2 2 0 0 0 1.94 1.5h.44a2 2 0 0 0 1.94-1.5l.17-.7a2 2 0 0 1 1.45-1.45l.7-.17a2 2 0 0 0 1.5-1.94v-.44a2 2 0 0 0-1.5-1.94l-.7-.17a2 2 0 0 1-1.45-1.45l-.17-.7A2 2 0 0 0 12.22 2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <UploadArea
-            onBookLoaded={handleBookLoaded}
-            onBooksChanged={handleBooksChanged}
-            compact
-          />
-
-          <div className="mt-5">
-            <BookLibrary
-              ref={libraryRef}
-              onSelectBook={handleSelectBook}
-              activeBookId={focusBookId}
+        <div className="min-h-0 flex flex-1 flex-col gap-4 p-5">
+          {!publicMode && (
+            <UploadArea
+              onBookLoaded={handleBookLoaded}
+              onBooksChanged={handleBooksChanged}
+              compact
             />
+          )}
+
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">
+            <section className="min-h-0 overflow-y-auto rounded-xl border border-border bg-background p-3">
+              <BookLibrary
+                ref={libraryRef}
+                onSelectBook={handleSelectBook}
+                activeBookId={focusBookId}
+                readOnly={publicMode}
+              />
+            </section>
+
+            <section className="min-h-0 overflow-y-auto space-y-4 rounded-xl border border-border bg-background p-3">
+              {chatHistory.length > 0 && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
+                      Recent Chats
+                    </h2>
+                    <button
+                      onClick={startNewChat}
+                      className="text-xs font-medium text-primary hover:text-primary-hover transition-colors"
+                    >
+                      + New
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {chatHistory.slice(0, 20).map((chat) => (
+                      <button
+                        key={chat.id}
+                        onClick={() => loadChatById(chat.id)}
+                        className={`w-full text-left rounded-lg px-2 py-1.5 text-xs transition-colors ${
+                          chatId === chat.id
+                            ? "bg-primary/10 text-primary"
+                            : "text-foreground hover:bg-surface-hover"
+                        }`}
+                      >
+                        <p className="truncate font-medium">{chat.title}</p>
+                        <p className="truncate text-[10px] text-muted">
+                          {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </aside>
@@ -365,13 +750,50 @@ export default function Home() {
                         }
                       `}
                     >
-                      <div className="whitespace-pre-wrap">{message.content}</div>
+                      {isUser ? (
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                      ) : (
+                        <div className="prose-ai">
+                          <ReactMarkdown>{message.content}</ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {message.sources && message.sources.length > 0 && (
                     <div className="mt-2 ml-0">
-                      <SourcesList sources={message.sources} />
+                      <SourcesList
+                        sources={message.sources}
+                        onCitationClick={(source) =>
+                          setInput(`Open excerpt: ${source.book} ${source.position || ""} "${source.excerpt}"`)
+                        }
+                      />
+                    </div>
+                  )}
+                  {message.specialists && message.specialists.length > 0 && (
+                    <div className="mt-2 ml-0">
+                      <SpecialistReportsList reports={message.specialists} />
+                    </div>
+                  )}
+                  {message.why && (
+                    <div className="mt-2 ml-0">
+                      <WhyPanel why={message.why} />
+                    </div>
+                  )}
+                  {!isUser && (
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-foreground"
+                        onClick={() => setInput(`Retry specialist step for: ${messages[i - 1]?.content || ""}`)}
+                      >
+                        Retry from specialist step
+                      </button>
+                      <button
+                        className="rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-foreground"
+                        onClick={() => setInput(`Retry final synthesis for: ${messages[i - 1]?.content || ""}`)}
+                      >
+                        Retry from final step
+                      </button>
                     </div>
                   )}
                 </div>
@@ -458,6 +880,206 @@ export default function Home() {
           </div>
         </div>
       </main>
+
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-border bg-background p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold">AI Personality Settings</h3>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="rounded p-1 text-muted hover:text-foreground"
+                title="Close"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">Response language</label>
+                <select
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                  value={settings.language}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, language: e.target.value }))}
+                >
+                  {["Auto", "English", "Norwegian", "Spanish", "French", "German"].map((lang) => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">Tone</label>
+                <select
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                  value={settings.tone}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, tone: e.target.value }))}
+                >
+                  {["Scientific", "Casual", "Teacher-like", "Concise", "Custom"].map((tone) => (
+                    <option key={tone} value={tone}>{tone}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">Custom instructions</label>
+                <textarea
+                  value={settings.customInstructions}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, customInstructions: e.target.value }))}
+                  rows={4}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                  placeholder="Example: Focus on military strategy and compare contradictions between books."
+                />
+              </div>
+
+              <div className="rounded-lg border border-border bg-surface p-3">
+                <label className="mb-2 flex items-center gap-2 text-xs font-medium text-muted">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.groundedMode)}
+                    onChange={(e) =>
+                      setSettings((prev) => ({ ...prev, groundedMode: e.target.checked }))
+                    }
+                  />
+                  Strict grounded mode (return "insufficient evidence" when uncited)
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  <input
+                    value={settings.modelRouting?.specialistModelId || ""}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        modelRouting: { ...(prev.modelRouting || {}), specialistModelId: e.target.value },
+                      }))
+                    }
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    placeholder="Specialist model ID"
+                  />
+                  <input
+                    value={settings.modelRouting?.orchestratorModelId || ""}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        modelRouting: { ...(prev.modelRouting || {}), orchestratorModelId: e.target.value },
+                      }))
+                    }
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    placeholder="Orchestrator model ID"
+                  />
+                  <input
+                    value={settings.modelRouting?.extractionModelId || ""}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        modelRouting: { ...(prev.modelRouting || {}), extractionModelId: e.target.value },
+                      }))
+                    }
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    placeholder="Extraction/profile model ID"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted">Focus areas</label>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {settings.focusAreas.map((area) => (
+                    <span key={area} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                      {area}
+                      <button
+                        onClick={() =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            focusAreas: prev.focusAreas.filter((a) => a !== area),
+                          }))
+                        }
+                        className="rounded p-0.5 hover:bg-primary/20"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={focusAreaInput}
+                    onChange={(e) => setFocusAreaInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addFocusArea();
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                    placeholder="Add focus area..."
+                  />
+                  <button
+                    onClick={addFocusArea}
+                    className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-border bg-surface p-3">
+              <button
+                onClick={() => fetch("/api/reindex", { method: "POST" })}
+                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
+              >
+                Re-index manager
+              </button>
+              <button
+                onClick={() => fetch("/api/eval").then((r) => r.json()).then((d) => alert(`Eval score: ${d.score}`))}
+                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
+              >
+                Run evaluation harness
+              </button>
+              <button
+                onClick={() => fetch("/api/safety", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "backup" }) })}
+                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
+              >
+                Backup now
+              </button>
+              <button
+                onClick={async () => {
+                  const res = await fetch("/api/share", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ bookIds: focusBookId ? [focusBookId] : [] }),
+                  });
+                  const data = await res.json();
+                  if (data?.url) alert(`Share link created: ${data.url}`);
+                }}
+                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
+              >
+                Create read-only snapshot link
+              </button>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveSettings}
+                className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+              >
+                Save settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
