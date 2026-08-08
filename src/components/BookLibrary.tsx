@@ -12,6 +12,9 @@ interface Book {
   author?: string;
   fileType?: string;
   seriesId?: string;
+  seriesOrder?: number;
+  isbn?: string;
+  publishedYear?: number;
 }
 
 interface Series {
@@ -21,10 +24,17 @@ interface Series {
   createdAt: string;
 }
 
+interface DuplicateGroup {
+  key: string;
+  books: Book[];
+}
+
 interface BookLibraryProps {
   onSelectBook: (book: { id: string; title: string; wordCount: number }) => void;
   activeBookId?: string | null;
   readOnly?: boolean;
+  /** "shelf" = roomy main-stage grid; "rail" = compact */
+  variant?: "shelf" | "rail";
 }
 
 export interface BookLibraryHandle {
@@ -32,14 +42,14 @@ export interface BookLibraryHandle {
 }
 
 const COVER_COLORS = [
-  "bg-indigo-500/15 text-indigo-400",
-  "bg-emerald-500/15 text-emerald-400",
-  "bg-amber-500/15 text-amber-400",
-  "bg-rose-500/15 text-rose-400",
-  "bg-cyan-500/15 text-cyan-400",
-  "bg-purple-500/15 text-purple-400",
-  "bg-orange-500/15 text-orange-400",
-  "bg-teal-500/15 text-teal-400",
+  "bg-[#5a6f58]/22 text-[#3a4a38]",
+  "bg-[#b08968]/25 text-[#6b4f38]",
+  "bg-[#7a8f9a]/20 text-[#3d4f58]",
+  "bg-[#a89070]/22 text-[#5c4a35]",
+  "bg-[#8a9578]/20 text-[#454d3c]",
+  "bg-[#958a9a]/18 text-[#4e4558]",
+  "bg-[#a88878]/20 text-[#5c453c]",
+  "bg-[#789a90]/20 text-[#3c524c]",
 ];
 
 function hashTitle(title: string): number {
@@ -69,6 +79,8 @@ function CoverImage({ bookId, title }: { bookId: string; title: string }) {
   if (failed) return <BookIcon title={title} />;
 
   return (
+    // Covers are local API blobs; next/image isn't useful here.
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={`/api/covers/${bookId}`}
       alt={`Cover of ${title}`}
@@ -79,13 +91,15 @@ function CoverImage({ bookId, title }: { bookId: string; title: string }) {
 }
 
 const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
-  function BookLibrary({ onSelectBook, activeBookId, readOnly }, ref) {
+  function BookLibrary({ onSelectBook, activeBookId, readOnly, variant = "rail" }, ref) {
+    const shelf = variant === "shelf";
     const [books, setBooks] = useState<Book[]>([]);
     const [series, setSeries] = useState<Series[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState("");
     const [manageMode, setManageMode] = useState(false);
     const [collapsedSeries, setCollapsedSeries] = useState<Record<string, boolean>>({});
+    const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
 
     const fetchBooks = useCallback(async () => {
       try {
@@ -208,6 +222,74 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
       setCollapsedSeries((prev) => ({ ...prev, [seriesId]: !prev[seriesId] }));
     }, []);
 
+    const handleAutoFixSeries = useCallback(async () => {
+      const res = await fetch("/api/series", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reconcile", allowRemote: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Series fix failed.");
+        return;
+      }
+      await fetchBooks();
+      alert(
+        `Series grouping fixed.\n` +
+          `Updated books: ${data.updatedBooks ?? 0}\n` +
+          `Ordered books: ${data.orderedBooks ?? 0}\n` +
+          `Created: ${data.createdSeries ?? 0}\n` +
+          `Merged folders: ${data.mergedSeries ?? 0}\n` +
+          `Removed junk: ${data.removedSeries ?? 0}\n` +
+          `Open Library matches: ${data.lookedUp ?? 0}`
+      );
+    }, [fetchBooks]);
+
+    const handleScanDuplicates = useCallback(async () => {
+      const res = await fetch("/api/books", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "duplicates" }),
+      });
+      const data = await res.json();
+      setDuplicateGroups(data.groups || []);
+      if (!data.groups?.length) {
+        alert("No duplicate groups detected.");
+      }
+    }, []);
+
+    const handleMergeDuplicateGroup = useCallback(
+      async (group: DuplicateGroup) => {
+        if (!group.books.length || group.books.length < 2) return;
+        const sorted = [...group.books].sort((a, b) => a.addedAt.localeCompare(b.addedAt));
+        const primary = sorted[0];
+        if (
+          !confirm(
+            `Merge duplicates for "${primary.title}"?\nKeep: ${primary.title}\nRemove: ${sorted
+              .slice(1)
+              .map((b) => b.title)
+              .join(", ")}`
+          )
+        ) {
+          return;
+        }
+        for (const dupe of sorted.slice(1)) {
+          await fetch("/api/books", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "merge-duplicate",
+              primaryBookId: primary.id,
+              duplicateBookId: dupe.id,
+            }),
+          });
+        }
+        await fetchBooks();
+        await handleScanDuplicates();
+      },
+      [fetchBooks, handleScanDuplicates]
+    );
+
     if (loading) {
       return (
         <div className="flex flex-1 items-center justify-center text-sm text-muted">
@@ -241,11 +323,26 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
     const visibleSeries = series
       .map((s) => ({
         ...s,
-        books: s.bookIds.map((id) => booksById.get(id)).filter(Boolean) as Book[],
+        books: s.bookIds
+          .map((id) => booksById.get(id))
+          .filter(Boolean)
+          .sort((a, b) => {
+            const ao = a!.seriesOrder ?? 9999;
+            const bo = b!.seriesOrder ?? 9999;
+            if (ao !== bo) return ao - bo;
+            const ay = a!.publishedYear ?? 9999;
+            const by = b!.publishedYear ?? 9999;
+            if (ay !== by) return ay - by;
+            return a!.title.localeCompare(b!.title);
+          }) as Book[],
       }))
       .filter((s) => s.books.length > 0);
     const groupedBookIds = new Set(visibleSeries.flatMap((s) => s.books.map((b) => b.id)));
     const ungroupedBooks = filteredBooks.filter((b) => !groupedBookIds.has(b.id));
+
+    const bookGridClass = shelf
+      ? "grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+      : "grid grid-cols-2 gap-5 sm:grid-cols-3";
 
     const renderBookCard = (book: Book) => {
       const isActive = activeBookId === book.id;
@@ -253,10 +350,10 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
         <div
           key={book.id}
           onClick={() => onSelectBook(book)}
-          className={`group relative cursor-pointer overflow-hidden rounded-xl border-2 transition-all hover:shadow-md ${
+          className={`group relative cursor-pointer overflow-hidden rounded-2xl border transition-all hover:-translate-y-0.5 hover:shadow-md ${
             isActive
-              ? "border-primary bg-primary/5 shadow-md"
-              : "border-border bg-background hover:bg-surface-hover"
+              ? "border-primary/70 bg-primary/5 shadow-md"
+              : "border-border/40 bg-surface hover:border-border hover:bg-surface-hover"
           }`}
         >
           <div className="aspect-[2/3] w-full">
@@ -267,25 +364,32 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
             )}
           </div>
           {isActive && (
-            <div className="absolute left-1.5 top-1.5 z-10 rounded-full bg-primary p-1 text-white shadow">
+            <div className="absolute left-1.5 top-1.5 z-10 rounded-full bg-primary p-1 text-[#e8ddd0] shadow">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
           )}
-          <div className="p-2">
-            <p className="truncate text-sm font-medium">{book.title}</p>
+          <div className={shelf ? "p-3.5" : "p-2.5"}>
+            {book.seriesOrder != null && (
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary/80">
+                Book {Number.isInteger(book.seriesOrder) ? book.seriesOrder : book.seriesOrder}
+              </p>
+            )}
+            <p className={`truncate font-medium ${shelf ? "text-[15px]" : "text-sm"}`}>{book.title}</p>
             {book.author && (
               <p className="truncate text-[11px] text-muted">{book.author}</p>
             )}
-            <p className="flex items-center gap-1.5 truncate text-[11px] text-muted">
-              {formatWordCount(book.wordCount)}
-              {book.fileType && (
-                <span className="rounded bg-muted/20 px-1 py-0.5 text-[9px] font-bold uppercase leading-none tracking-wider">
-                  {book.fileType}
-                </span>
-              )}
-            </p>
+            {!shelf && (
+              <p className="flex items-center gap-1.5 truncate text-[11px] text-muted">
+                {formatWordCount(book.wordCount)}
+                {book.fileType && (
+                  <span className="rounded bg-muted/20 px-1 py-0.5 text-[9px] font-bold uppercase leading-none tracking-wider">
+                    {book.fileType}
+                  </span>
+                )}
+              </p>
+            )}
             {manageMode && !readOnly && (
               <select
                 className="mt-1 w-full rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
@@ -320,30 +424,75 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
 
     return (
       <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-            Your Library ({books.length})
-          </h2>
+        <div className={`mb-5 flex items-center justify-between gap-2 px-0.5 ${shelf ? "mb-7" : ""}`}>
+          <div>
+            <h2
+              className={
+                shelf
+                  ? "font-display text-2xl font-semibold tracking-tight text-foreground"
+                  : "text-[11px] font-medium tracking-wide text-muted"
+              }
+            >
+              {shelf ? "Your shelves" : `Your Library (${books.length})`}
+            </h2>
+            {shelf && (
+              <p className="mt-1 text-sm text-muted">
+                {books.length} book{books.length === 1 ? "" : "s"} · pick one to talk about
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-2">
-            <p className="text-[11px] text-muted">Click to focus questions</p>
+            {!shelf && <p className="hidden text-[11px] text-muted sm:block">Click to focus</p>}
             {!readOnly && (
               <button
                 onClick={() => setManageMode((v) => !v)}
-                className="rounded border border-border px-2 py-0.5 text-[10px] font-medium text-muted hover:text-foreground"
+                className="rounded-full border border-border/60 px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
               >
-                {manageMode ? "Done" : "Manage series"}
+                {manageMode ? "Done" : "Manage"}
               </button>
             )}
           </div>
         </div>
         {manageMode && !readOnly && (
           <div className="mb-3">
-            <button
-              onClick={handleCreateSeries}
-              className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
-            >
-              + New series
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleCreateSeries}
+                className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+              >
+                + New series
+              </button>
+              <button
+                onClick={handleAutoFixSeries}
+                className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+                title="Merge Book N folders and look up series on Open Library"
+              >
+                Fix series grouping
+              </button>
+              <button
+                onClick={handleScanDuplicates}
+                className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+              >
+                Find duplicates
+              </button>
+            </div>
+            {duplicateGroups.length > 0 && (
+              <div className="mt-2 space-y-1 rounded border border-border bg-background p-2">
+                {duplicateGroups.map((group) => (
+                  <div key={group.key} className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="truncate text-muted">
+                      {group.books[0]?.title} ({group.books.length})
+                    </span>
+                    <button
+                      onClick={() => handleMergeDuplicateGroup(group)}
+                      className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground"
+                    >
+                      Merge
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {books.length > 4 && (
@@ -404,7 +553,7 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
                 )}
               </div>
               {!collapsed && (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className={bookGridClass}>
                   {s.books.map((book) => renderBookCard(book))}
                 </div>
               )}
@@ -419,7 +568,7 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
                 Ungrouped
               </p>
             )}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className={bookGridClass}>
               {ungroupedBooks.map((book) => renderBookCard(book))}
             </div>
           </div>

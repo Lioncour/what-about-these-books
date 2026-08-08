@@ -1,34 +1,21 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import ReactMarkdown from "react-markdown";
+import Link from "next/link";
+import ChatMarkdown from "@/components/ChatMarkdown";
 import UploadArea from "@/components/UploadArea";
 import BookLibrary, { BookLibraryHandle } from "@/components/BookLibrary";
-
-interface Source {
-  book: string;
-  excerpt: string;
-  position?: string;
-}
-
-interface SpecialistReport {
-  bookTitle: string;
-  confidence: "high" | "medium" | "low";
-  numericEstimate: number | null;
-  directAnswer: string;
-  findingsCount: number;
-  topFindings: { finding: string; location: string }[];
-  caveats: string[];
-  reasked?: boolean;
-  scorecard?: { precisionEstimate: number; recallEstimate: number; total: number };
-}
-
-interface WhyInfo {
-  groundedMode: boolean;
-  sourceCount: number;
-  specialistModelId: string;
-  orchestratorModelId: string;
-}
+import AwsStatusBadge from "@/components/AwsStatusBadge";
+import AskDialog from "@/components/chat/AskDialog";
+import PassageReader, { type PassageReaderTarget } from "@/components/chat/PassageReader";
+import BrandMark from "@/components/BrandMark";
+import {
+  SourcesList,
+  type Source,
+  type SpecialistReport,
+  type WhyInfo,
+} from "@/components/chat/MessageExtras";
+import { decodeStreamLine } from "@/lib/chat/stream-protocol";
 
 interface Message {
   role: "user" | "assistant";
@@ -38,163 +25,14 @@ interface Message {
   why?: WhyInfo;
 }
 
-function SourcesList({ sources, onCitationClick }: { sources: Source[]; onCitationClick?: (source: Source) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const uniqueBooks = [...new Set(sources.map((s) => s.book))];
-
-  return (
-    <div className="rounded-xl border border-border bg-background px-3 py-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 text-xs text-muted transition-colors hover:text-foreground"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-        </svg>
-        <span className="font-medium">
-          {sources.length} source{sources.length !== 1 ? "s" : ""} from{" "}
-          {uniqueBooks.length === 1
-            ? `"${uniqueBooks[0]}"`
-            : `${uniqueBooks.length} books`}
-        </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`ml-auto transition-transform ${expanded ? "rotate-180" : ""}`}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-
-      {expanded && (
-        <div className="mt-2 space-y-2 border-t border-border pt-2">
-          {sources.map((source, i) => (
-            <div key={i} className="text-xs">
-              <div className="flex items-center gap-1.5 font-medium text-foreground">
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-bold text-primary">
-                  {i + 1}
-                </span>
-                <span className="flex-1 truncate">{source.book}</span>
-                {source.position && (
-                  <span className="shrink-0 rounded bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted">
-                    {source.position}
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => onCitationClick?.(source)}
-                className="mt-0.5 pl-[22px] text-left text-muted leading-relaxed hover:text-foreground"
-              >
-                &ldquo;{source.excerpt}...&rdquo;
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SpecialistReportsList({ reports }: { reports: SpecialistReport[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const high = reports.filter((r) => r.confidence === "high").length;
-  const med = reports.filter((r) => r.confidence === "medium").length;
-  const low = reports.filter((r) => r.confidence === "low").length;
-
-  return (
-    <div className="rounded-xl border border-border bg-background px-3 py-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 text-xs text-muted transition-colors hover:text-foreground"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2v20" />
-          <path d="M2 12h20" />
-        </svg>
-        <span className="font-medium">
-          Specialist reports: {reports.length} (high {high}, medium {med}, low {low})
-        </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`ml-auto transition-transform ${expanded ? "rotate-180" : ""}`}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-
-      {expanded && (
-        <div className="mt-2 space-y-2 border-t border-border pt-2">
-          {reports.map((r) => (
-            <div key={r.bookTitle} className="rounded-lg border border-border bg-surface px-2 py-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-foreground">{r.bookTitle}</span>
-                <span className={`rounded px-1.5 py-0.5 text-[10px] ${
-                  r.confidence === "high"
-                    ? "bg-green-500/15 text-green-600 dark:text-green-400"
-                    : r.confidence === "medium"
-                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                      : "bg-red-500/15 text-red-600 dark:text-red-400"
-                }`}>
-                  {r.confidence}
-                </span>
-                {r.numericEstimate !== null && (
-                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                    estimate: {r.numericEstimate}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 text-muted">{r.directAnswer}</p>
-              {r.reasked && <p className="mt-1 text-[11px] text-amber-500">Auto re-asked specialist due to low confidence.</p>}
-              {r.scorecard && (
-                <p className="mt-1 text-[11px] text-muted">
-                  QA scorecard: precision {r.scorecard.precisionEstimate}, recall {r.scorecard.recallEstimate}, n={r.scorecard.total}
-                </p>
-              )}
-              {r.topFindings.length > 0 && (
-                <ul className="mt-1 space-y-0.5 text-muted">
-                  {r.topFindings.map((f, i) => (
-                    <li key={i}>
-                      - {f.finding} <span className="text-[10px]">({f.location})</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {r.caveats.length > 0 && (
-                <p className="mt-1 text-[11px] text-muted">Caveats: {r.caveats.join("; ")}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WhyPanel({ why }: { why: WhyInfo }) {
-  return (
-    <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted">
-      <p className="font-medium text-foreground">Why this answer</p>
-      <p>Grounded mode: {why.groundedMode ? "strict" : "off"}</p>
-      <p>Sources used: {why.sourceCount}</p>
-      <p>Specialist model: {why.specialistModelId}</p>
-      <p>Orchestrator model: {why.orchestratorModelId}</p>
-    </div>
-  );
+interface CharacterApiResponse {
+  character: string;
+  found: boolean;
+  type?: string;
+  mentions?: number;
+  books?: string[];
+  relations?: Array<{ from: string; to: string; relation: string; bookId: string; location: string; evidence: string }>;
+  snippets?: Array<{ bookTitle: string; location: string; snippet: string }>;
 }
 
 interface ChatSummary {
@@ -205,25 +43,34 @@ interface ChatSummary {
   updatedAt: string;
 }
 
-interface AISettings {
-  language: string;
-  tone: string;
-  customInstructions: string;
-  focusAreas: string[];
-  groundedMode?: boolean;
-  modelRouting?: {
-    specialistModelId?: string;
-    orchestratorModelId?: string;
-    extractionModelId?: string;
-  };
-}
-
 interface BuildInfo {
   version: string;
   displayVersion: string;
   buildId: string;
   latestLabel?: string;
   startedAt: string;
+}
+
+type AskMode = "character" | "contradictions" | "quick" | null;
+
+const COMPANION_WIDTH_KEY = "wab-companion-width";
+const COMPANION_COLLAPSED_KEY = "wab-companion-collapsed";
+const LEGACY_SIDEBAR_WIDTH_KEY = "wab-sidebar-width";
+const LEGACY_SIDEBAR_COLLAPSED_KEY = "wab-sidebar-collapsed";
+const ACTIVE_CHAT_KEY = "wab-active-chat-id";
+const COMPANION_MIN = 360;
+const COMPANION_MAX = 560;
+const COMPANION_DEFAULT = 440;
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
+function clampCompanionWidth(width: number): number {
+  return Math.min(COMPANION_MAX, Math.max(COMPANION_MIN, width));
 }
 
 export default function Home() {
@@ -236,20 +83,56 @@ export default function Home() {
   const [publicMode, setPublicMode] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatSummary[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
-  const [focusAreaInput, setFocusAreaInput] = useState("");
-  const [settings, setSettings] = useState<AISettings>({
-    language: "Auto",
-    tone: "Scientific",
-    customInstructions: "",
-    focusAreas: [],
-    groundedMode: false,
-    modelRouting: {},
-  });
+  const [companionMode, setCompanionMode] = useState(true);
+  const [askMode, setAskMode] = useState<AskMode>(null);
+  const [chatsOpen, setChatsOpen] = useState(false);
+  const [passageTarget, setPassageTarget] = useState<PassageReaderTarget | null>(null);
+  const [bookCount, setBookCount] = useState(0);
+  const [recentTitles, setRecentTitles] = useState<string[]>([]);
+  const [companionWidth, setCompanionWidth] = useState(COMPANION_DEFAULT);
+  const [companionCollapsed, setCompanionCollapsed] = useState(false);
+  const [hasAssistantTokens, setHasAssistantTokens] = useState(false);
+
   const libraryRef = useRef<BookLibraryHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const resizingRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const storedWidth =
+        localStorage.getItem(COMPANION_WIDTH_KEY) ||
+        localStorage.getItem(LEGACY_SIDEBAR_WIDTH_KEY);
+      if (storedWidth) {
+        const parsed = Number(storedWidth);
+        if (Number.isFinite(parsed)) setCompanionWidth(clampCompanionWidth(parsed));
+      }
+      const collapsed =
+        localStorage.getItem(COMPANION_COLLAPSED_KEY) ??
+        localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY);
+      setCompanionCollapsed(collapsed === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPANION_WIDTH_KEY, String(companionWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [companionWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPANION_COLLAPSED_KEY, companionCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [companionCollapsed]);
 
   useEffect(() => {
     fetch("/api/config")
@@ -259,16 +142,7 @@ export default function Home() {
 
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((data) =>
-        setSettings({
-          language: data.language || "Auto",
-          tone: data.tone || "Scientific",
-          customInstructions: data.customInstructions || "",
-          focusAreas: Array.isArray(data.focusAreas) ? data.focusAreas : [],
-          groundedMode: Boolean(data.groundedMode),
-          modelRouting: data.modelRouting || {},
-        })
-      )
+      .then((data) => setCompanionMode(data.companionMode !== false))
       .catch(() => {});
 
     fetch("/api/build-info")
@@ -284,24 +158,73 @@ export default function Home() {
       )
       .catch(() => {});
 
+    fetch("/api/books")
+      .then((r) => r.json())
+      .then((data) => {
+        const books = Array.isArray(data.books) ? data.books : [];
+        setBookCount(books.length);
+        setRecentTitles(
+          books
+            .slice(0, 3)
+            .map((b: { title?: string }) => String(b.title || "").trim())
+            .filter(Boolean)
+        );
+      })
+      .catch(() => {});
   }, []);
 
-  const saveSettings = useCallback(async () => {
-    await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
-    });
-    setSettingsOpen(false);
-  }, [settings]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setAskMode("quick");
+        return;
+      }
 
-  const addFocusArea = useCallback(() => {
-    const value = focusAreaInput.trim();
-    if (!value) return;
-    if (settings.focusAreas.includes(value)) return;
-    setSettings((prev) => ({ ...prev, focusAreas: [...prev.focusAreas, value] }));
-    setFocusAreaInput("");
-  }, [focusAreaInput, settings.focusAreas]);
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const typing =
+        tag === "textarea" ||
+        tag === "input" ||
+        target?.isContentEditable === true;
+      if (typing) return;
+
+      if (event.key === "]") {
+        event.preventDefault();
+        setCompanionCollapsed((prev) => !prev);
+      } else if (event.key === "[") {
+        event.preventDefault();
+        setCompanionCollapsed(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      if (!resizingRef.current || companionCollapsed) return;
+      setCompanionWidth(clampCompanionWidth(window.innerWidth - event.clientX));
+    };
+    const onMouseUp = () => {
+      resizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [companionCollapsed]);
+
+  const startCompanionResize = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    resizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
 
   const refreshChatHistory = useCallback(() => {
     fetch("/api/chats")
@@ -313,6 +236,70 @@ export default function Home() {
   useEffect(() => {
     refreshChatHistory();
   }, [refreshChatHistory]);
+
+  const loadChatById = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/chats?id=${id}`);
+      const data = await res.json();
+      if (data.messages) {
+        setChatId(data.id);
+        setMessages(
+          (data.messages as Message[]).map((m) => ({
+            role: m.role,
+            content: m.content,
+            ...(m.sources?.length ? { sources: m.sources } : {}),
+          }))
+        );
+        if (data.bookId && data.bookId !== "all") {
+          setFocusBookId(data.bookId);
+          setFocusBookTitle(data.bookTitle);
+        } else {
+          setFocusBookId(null);
+          setFocusBookTitle(null);
+        }
+        try {
+          localStorage.setItem(ACTIVE_CHAT_KEY, data.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Remember which chat is active across Settings / remounts
+  useEffect(() => {
+    try {
+      if (chatId) localStorage.setItem(ACTIVE_CHAT_KEY, chatId);
+      else localStorage.removeItem(ACTIVE_CHAT_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, [chatId]);
+
+  // Restore last (or most recent) chat when landing on home
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const preferred =
+          typeof window !== "undefined" ? localStorage.getItem(ACTIVE_CHAT_KEY) : null;
+        const res = await fetch("/api/chats");
+        const data = await res.json();
+        const chats = (data.chats || []) as ChatSummary[];
+        if (cancelled || !chats.length) return;
+        const targetId =
+          preferred && chats.some((c) => c.id === preferred) ? preferred : chats[0].id;
+        if (!cancelled) await loadChatById(targetId);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadChatById]);
 
   const scrollToMessages = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -330,6 +317,13 @@ export default function Home() {
     }
   }, [input]);
 
+  const stopGeneration = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsLoading(false);
+    setThinkingSteps([]);
+  }, []);
+
   const sendMessage = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
@@ -343,12 +337,17 @@ export default function Home() {
     setInput("");
     setIsLoading(true);
     setThinkingSteps([]);
+    setHasAssistantTokens(false);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookId, bookTitle, messages: newMessages }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -361,6 +360,25 @@ export default function Home() {
       let assistantContent = "";
       let streamBuffer = "";
       let addedAssistantMessage = false;
+      let receivedTokens = false;
+
+      const ensureAssistantMessage = () => {
+        if (!addedAssistantMessage) {
+          addedAssistantMessage = true;
+          setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+        }
+      };
+
+      const updateAssistantContent = (content: string) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content,
+          };
+          return updated;
+        });
+      };
 
       if (reader) {
         while (true) {
@@ -372,43 +390,31 @@ export default function Home() {
           streamBuffer = lines.pop() || "";
 
           for (const line of lines) {
-            const colonIdx = line.indexOf(":");
-            if (colonIdx === -1) {
-              // Multiline TEXT payloads can arrive as continuation lines without a prefix.
-              // Treat those lines as assistant text instead of dropping them.
-              if (addedAssistantMessage) {
-                assistantContent += `\n${line}`;
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  updated[updated.length - 1] = {
-                    role: "assistant",
-                    content: assistantContent,
-                  };
-                  return updated;
-                });
-              }
-              continue;
-            }
+            if (!line.trim()) continue;
+            const decoded = decodeStreamLine(line);
+            if (!decoded) continue;
 
-            const type = line.slice(0, colonIdx);
-            const data = line.slice(colonIdx + 1);
+            const { type, data } = decoded;
 
             if (type === "STATUS") {
               setThinkingSteps((prev) => [...prev, data]);
-            } else if (type === "TEXT") {
-              if (!addedAssistantMessage) {
-                addedAssistantMessage = true;
-                setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-              }
+            } else if (type === "TOKEN") {
+              setThinkingSteps([]);
+              ensureAssistantMessage();
+              receivedTokens = true;
+              setHasAssistantTokens(true);
               assistantContent += data;
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: assistantContent,
-                };
-                return updated;
-              });
+              updateAssistantContent(assistantContent);
+            } else if (type === "TEXT") {
+              setThinkingSteps([]);
+              ensureAssistantMessage();
+              // TOKEN appends; TEXT replaces (non-stream paths send the full answer once).
+              // If tokens already started, ignore TEXT to avoid duplicating streamed content.
+              if (!receivedTokens) {
+                assistantContent = data;
+                updateAssistantContent(assistantContent);
+                setHasAssistantTokens(true);
+              }
             } else if (type === "SOURCES") {
               try {
                 const parsed = JSON.parse(data) as Source[];
@@ -420,7 +426,9 @@ export default function Home() {
                   };
                   return updated;
                 });
-              } catch { /* ignore parse errors */ }
+              } catch {
+                /* ignore parse errors */
+              }
             } else if (type === "SPECIALISTS") {
               try {
                 const parsed = JSON.parse(data) as SpecialistReport[];
@@ -432,7 +440,9 @@ export default function Home() {
                   };
                   return updated;
                 });
-              } catch { /* ignore parse errors */ }
+              } catch {
+                /* ignore parse errors */
+              }
             } else if (type === "WHY") {
               try {
                 const parsed = JSON.parse(data) as WhyInfo;
@@ -444,7 +454,21 @@ export default function Home() {
                   };
                   return updated;
                 });
-              } catch { /* ignore parse errors */ }
+              } catch {
+                /* ignore parse errors */
+              }
+            } else if (type === "LIBRARY_CHANGED") {
+              try {
+                const payload = JSON.parse(data) as { clearFocus?: boolean };
+                if (payload.clearFocus) {
+                  setFocusBookId(null);
+                  setFocusBookTitle(null);
+                }
+              } catch {
+                setFocusBookId(null);
+                setFocusBookTitle(null);
+              }
+              libraryRef.current?.refresh();
             } else if (type === "ERROR") {
               throw new Error(data);
             }
@@ -459,6 +483,9 @@ export default function Home() {
         ]);
       }
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -467,10 +494,129 @@ export default function Home() {
         },
       ]);
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setIsLoading(false);
       setThinkingSteps([]);
     }
-  }, [input, isLoading, messages, focusBookId, focusBookTitle, chatId]);
+  }, [input, isLoading, messages, focusBookId, focusBookTitle]);
+
+  const runCharacterLookup = useCallback(async (target: string) => {
+    const name = target.trim();
+    if (!name) return;
+    const userMessage: Message = { role: "user", content: `Show character page for ${name}` };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/knowledge?mode=character&character=${encodeURIComponent(name)}`);
+      const data = (await res.json()) as CharacterApiResponse;
+      const text = !data.found
+        ? `I couldn't find a character profile for **${name}** yet.`
+        : [
+            `## Character Page: ${data.character}`,
+            "",
+            `- Type: **${data.type || "unknown"}**`,
+            `- Mentions tracked: **${data.mentions ?? 0}**`,
+            `- Books in graph: **${data.books?.length ?? 0}**`,
+            "",
+            "### Relationship edges",
+            ...(data.relations?.slice(0, 8).map((r) => `- ${r.from} -> ${r.to} (${r.relation}, ${r.location})`) || [
+              "- No relationships available yet.",
+            ]),
+            "",
+            "### Evidence snippets",
+            ...(data.snippets?.slice(0, 8).map((s) => `- **${s.bookTitle}** (${s.location}): ${s.snippet}`) || [
+              "- No snippets available yet.",
+            ]),
+          ].join("\n");
+      setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Failed to load character page: ${error instanceof Error ? error.message : "Unknown error"}`,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const runContradictionCheck = useCallback(async (target: string) => {
+    const topic = target.trim();
+    if (!topic) return;
+    const userMessage: Message = { role: "user", content: `Check contradictions for ${topic}` };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/knowledge?mode=contradictions&q=${encodeURIComponent(topic)}`);
+      const data = (await res.json()) as { contradictions?: string[] };
+      const rows = data.contradictions || [];
+      const text = rows.length
+        ? `## Cross-book contradictions for ${topic}\n\n${rows.map((r) => `- ${r}`).join("\n")}`
+        : `I didn't detect obvious contradictions for **${topic}** across the indexed books.`;
+      setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Failed to run contradiction check: ${error instanceof Error ? error.message : "Unknown error"}`,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const handleQuickAction = useCallback(
+    (cmd: string) => {
+      const trimmed = cmd.trim();
+      if (!trimmed) return;
+
+      if (trimmed === "new") {
+        setMessages([]);
+        setChatId(null);
+        textareaRef.current?.focus();
+        return;
+      }
+      if (trimmed === "all") {
+        setFocusBookId(null);
+        setFocusBookTitle(null);
+        setMessages([]);
+        setChatId(null);
+        textareaRef.current?.focus();
+        return;
+      }
+      if (trimmed.toLowerCase().startsWith("character:")) {
+        const name = trimmed.split(":").slice(1).join(":").trim();
+        if (name) void runCharacterLookup(name);
+        return;
+      }
+      if (trimmed.toLowerCase().startsWith("contradictions:")) {
+        const topic = trimmed.split(":").slice(1).join(":").trim();
+        if (topic) void runContradictionCheck(topic);
+      }
+    },
+    [runCharacterLookup, runContradictionCheck]
+  );
+
+  const handleAskSubmit = useCallback(
+    (value: string) => {
+      const mode = askMode;
+      setAskMode(null);
+      if (mode === "character") {
+        void runCharacterLookup(value);
+      } else if (mode === "contradictions") {
+        void runContradictionCheck(value);
+      } else if (mode === "quick") {
+        handleQuickAction(value);
+      }
+    },
+    [askMode, runCharacterLookup, runContradictionCheck, handleQuickAction]
+  );
 
   useEffect(() => {
     if (messages.length < 2) return;
@@ -480,7 +626,11 @@ export default function Home() {
     const id = chatId || `chat-${Date.now()}`;
     if (!chatId) setChatId(id);
 
-    const title = messages[0].content.slice(0, 60);
+    const firstUser = messages.find((m) => m.role === "user")?.content || "";
+    const title =
+      firstUser.length > 40
+        ? `${firstUser.slice(0, 32)}…`
+        : firstUser.slice(0, 40) || "Chat";
     const bookId = focusBookId || "all";
     const bookTitle = focusBookTitle || "All Books";
 
@@ -492,10 +642,16 @@ export default function Home() {
         bookId,
         bookTitle,
         title,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.sources?.length ? { sources: m.sources } : {}),
+        })),
         updatedAt: new Date().toISOString(),
       }),
-    }).then(() => refreshChatHistory()).catch(() => {});
+    })
+      .then(() => refreshChatHistory())
+      .catch(() => {});
   }, [messages, chatId, focusBookId, focusBookTitle, refreshChatHistory]);
 
   const handleKeyDown = useCallback(
@@ -508,12 +664,12 @@ export default function Home() {
     [sendMessage]
   );
 
-  const handleBookLoaded = useCallback(
-    (_id: string, _title: string, _wordCount: number) => {
-      libraryRef.current?.refresh();
-    },
-    []
-  );
+  const handleBookLoaded = useCallback((id: string, title: string) => {
+    libraryRef.current?.refresh();
+    setFocusBookId(id);
+    setFocusBookTitle(title);
+    textareaRef.current?.focus();
+  }, []);
 
   const handleSelectBook = useCallback(
     (book: { id: string; title: string }) => {
@@ -524,8 +680,6 @@ export default function Home() {
         setFocusBookId(book.id);
         setFocusBookTitle(book.title);
       }
-      setMessages([]);
-      setChatId(null);
       textareaRef.current?.focus();
     },
     [focusBookId]
@@ -534,552 +688,505 @@ export default function Home() {
   const clearFocus = useCallback(() => {
     setFocusBookId(null);
     setFocusBookTitle(null);
-    setMessages([]);
-    setChatId(null);
   }, []);
 
-  const loadChatById = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/chats?id=${id}`);
-      const data = await res.json();
-      if (data.messages) {
-        setChatId(data.id);
-        setMessages(data.messages);
-        if (data.bookId && data.bookId !== "all") {
-          setFocusBookId(data.bookId);
-          setFocusBookTitle(data.bookTitle);
-        } else {
-          setFocusBookId(null);
-          setFocusBookTitle(null);
+  const deleteChatById = useCallback(
+    async (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!window.confirm("Delete this chat?")) return;
+      try {
+        await fetch("/api/chats", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId: id }),
+        });
+        if (chatId === id) {
+          setMessages([]);
+          setChatId(null);
+          try {
+            localStorage.removeItem(ACTIVE_CHAT_KEY);
+          } catch {
+            /* ignore */
+          }
         }
+        refreshChatHistory();
+      } catch {
+        /* ignore */
       }
-    } catch { /* ignore */ }
-  }, []);
+    },
+    [chatId, refreshChatHistory]
+  );
 
   const startNewChat = useCallback(() => {
     setMessages([]);
     setChatId(null);
+    try {
+      localStorage.removeItem(ACTIVE_CHAT_KEY);
+    } catch {
+      /* ignore */
+    }
     textareaRef.current?.focus();
   }, []);
 
   const handleBooksChanged = useCallback(() => {
     libraryRef.current?.refresh();
+    fetch("/api/books")
+      .then((r) => r.json())
+      .then((data) => {
+        const books = Array.isArray(data.books) ? data.books : [];
+        setBookCount(books.length);
+        setRecentTitles(
+          books
+            .slice(0, 3)
+            .map((b: { title?: string }) => String(b.title || "").trim())
+            .filter(Boolean)
+        );
+      })
+      .catch(() => {});
   }, []);
 
+  const askDialogTitle =
+    askMode === "character"
+      ? "Character page"
+      : askMode === "contradictions"
+        ? "Cross-book contradictions"
+        : "Quick action";
+
+  const askDialogLabel =
+    askMode === "character"
+      ? "Character name"
+      : askMode === "contradictions"
+        ? "Entity or topic"
+        : "Command";
+
+  const askDialogPlaceholder =
+    askMode === "character"
+      ? "Example: Joe Bishop"
+      : askMode === "contradictions"
+        ? "Entity or topic to check"
+        : "new · all · character:Name · contradictions:Topic";
+
+  const buildTitle = buildInfo
+    ? buildInfo.startedAt
+      ? `${buildInfo.latestLabel || `v${buildInfo.version} · ${buildInfo.buildId}`}\nStarted: ${new Date(buildInfo.startedAt).toLocaleString()}`
+      : buildInfo.latestLabel || `v${buildInfo.version} · ${buildInfo.buildId}`
+    : undefined;
+
+  const showPresence =
+    isLoading && thinkingSteps.length > 0 && !hasAssistantTokens;
+
+  const companionSuggestions = focusBookId
+    ? [
+        "What's this one about?",
+        "Who matters most here?",
+        "Any pop-culture references?",
+        "Find a memorable quote",
+      ]
+    : bookCount > 0
+      ? [
+          "Any pop culture references in the books?",
+          "Who shows up across the series?",
+          "Help me pick what to reread",
+          "How many times is Skippy mentioned in the first 7 books?",
+        ]
+      : ["What can you do?", "How do I add a book?"];
+
+  const titlesPhrase =
+    recentTitles.length > 0
+      ? recentTitles.length === 1
+        ? recentTitles[0]
+        : recentTitles.length === 2
+          ? `${recentTitles[0]} and ${recentTitles[1]}`
+          : `${recentTitles[0]}, ${recentTitles[1]}…`
+      : "";
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Left side — library */}
-      <aside className="flex w-1/2 flex-col border-r border-border bg-surface">
-        <div className="flex items-center gap-3 border-b border-border px-5 py-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-              <path d="M8 7h6" />
-              <path d="M8 11h4" />
-            </svg>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-sm font-bold leading-tight tracking-tight">What About This Book?</h1>
-            <p className="text-[11px] text-muted">AI-powered book companion</p>
-          </div>
-          {buildInfo && (
-            <div
-              className="rounded-full border border-primary/50 bg-primary/20 px-3 py-1 text-[11px] font-extrabold tracking-wide text-primary"
-              title={
-                buildInfo.startedAt
-                  ? `${buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version} • ${buildInfo.buildId}`}\nStarted: ${new Date(buildInfo.startedAt).toLocaleString()}`
-                  : buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version} • ${buildInfo.buildId}`
-              }
-            >
-              {buildInfo.latestLabel || `LATEST BUILD • v${buildInfo.version}`}
-            </div>
-          )}
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="ml-auto rounded-lg border border-border p-2 text-muted transition-colors hover:text-foreground"
-            title="AI settings"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12.22 2h-.44a2 2 0 0 0-1.94 1.5l-.17.7a2 2 0 0 1-1.45 1.45l-.7.17a2 2 0 0 0-1.5 1.94v.44a2 2 0 0 0 1.5 1.94l.7.17a2 2 0 0 1 1.45 1.45l.17.7a2 2 0 0 0 1.94 1.5h.44a2 2 0 0 0 1.94-1.5l.17-.7a2 2 0 0 1 1.45-1.45l.7-.17a2 2 0 0 0 1.5-1.94v-.44a2 2 0 0 0-1.5-1.94l-.7-.17a2 2 0 0 1-1.45-1.45l-.17-.7A2 2 0 0 0 12.22 2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </button>
+    <div className="flex h-screen flex-col overflow-hidden text-foreground">
+      <header className="flex shrink-0 items-center gap-4 border-b border-border/40 px-6 py-4 sm:px-8">
+        <BrandMark className="h-12 w-12 shrink-0 shadow-sm shadow-black/5" />
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-xl font-semibold tracking-tight sm:text-2xl">
+            What About This Book?
+          </h1>
+          <p className="mt-0.5 text-sm text-muted">A reading room for the books you keep</p>
         </div>
+        <AwsStatusBadge />
+        {companionCollapsed && (
+          <button
+            type="button"
+            onClick={() => setCompanionCollapsed(false)}
+            className="rounded-xl border border-border/50 bg-surface px-3.5 py-2 text-sm text-muted transition-colors hover:border-border hover:text-foreground"
+            title="Open companion (])"
+          >
+            Notes
+          </button>
+        )}
+        <Link
+          href="/settings"
+          className="settings-orb inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border/50 bg-surface text-muted transition-all hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+          title={buildTitle ? `Settings · ${buildTitle}` : "Settings"}
+          aria-label="Settings"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.85"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <circle cx="12" cy="12" r="3.25" />
+            <path d="M12 2.75v2.1" />
+            <path d="M12 19.15v2.1" />
+            <path d="m19.45 7.2-1.82 1.05" />
+            <path d="m6.37 15.75-1.82 1.05" />
+            <path d="m19.45 16.8-1.82-1.05" />
+            <path d="m6.37 8.25-1.82-1.05" />
+            <circle cx="12" cy="12" r="8.5" opacity="0.35" />
+          </svg>
+        </Link>
+      </header>
 
-        <div className="min-h-0 flex flex-1 flex-col gap-4 p-5">
-          {!publicMode && (
-            <UploadArea
-              onBookLoaded={handleBookLoaded}
-              onBooksChanged={handleBooksChanged}
-              compact
-            />
-          )}
+      <div className="flex min-h-0 flex-1">
+        {/* Library stage — the room */}
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8 sm:py-7">
+            {!publicMode && (
+              <div className="max-w-xl">
+                <UploadArea
+                  onBookLoaded={handleBookLoaded}
+                  onBooksChanged={handleBooksChanged}
+                  compact
+                />
+              </div>
+            )}
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">
-            <section className="min-h-0 overflow-y-auto rounded-xl border border-border bg-background p-3">
+            <section className="min-h-0 flex-1">
               <BookLibrary
                 ref={libraryRef}
                 onSelectBook={handleSelectBook}
                 activeBookId={focusBookId}
                 readOnly={publicMode}
+                variant="shelf"
               />
             </section>
-
-            <section className="min-h-0 overflow-y-auto space-y-4 rounded-xl border border-border bg-background p-3">
-              {chatHistory.length > 0 && (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-                      Recent Chats
-                    </h2>
-                    <button
-                      onClick={startNewChat}
-                      className="text-xs font-medium text-primary hover:text-primary-hover transition-colors"
-                    >
-                      + New
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    {chatHistory.slice(0, 20).map((chat) => (
-                      <button
-                        key={chat.id}
-                        onClick={() => loadChatById(chat.id)}
-                        className={`w-full text-left rounded-lg px-2 py-1.5 text-xs transition-colors ${
-                          chatId === chat.id
-                            ? "bg-primary/10 text-primary"
-                            : "text-foreground hover:bg-surface-hover"
-                        }`}
-                      >
-                        <p className="truncate font-medium">{chat.title}</p>
-                        <p className="truncate text-[10px] text-muted">
-                          {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
           </div>
-        </div>
-      </aside>
+        </main>
 
-      {/* Right side — chat */}
-      <main className="flex min-w-0 flex-1 flex-col">
-        {/* Context bar */}
-        <div className="flex items-center gap-2 border-b border-border px-6 py-3">
-          {focusBookId ? (
-            <>
-              <span className="text-sm text-muted">Asking about:</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
-                {focusBookTitle}
+        {!companionCollapsed && (
+          <>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={startCompanionResize}
+              title="Drag to resize"
+              role="separator"
+              aria-orientation="vertical"
+            />
+
+            {/* Companion journal — not a chat clone */}
+            <aside
+              className="flex shrink-0 flex-col border-l border-border/40 bg-surface/70 backdrop-blur-[2px]"
+              style={{ width: companionWidth }}
+            >
+              <div className="flex items-start gap-3 border-b border-border/35 px-5 py-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                    Companion notes
+                  </p>
+                  {focusBookId ? (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <p className="truncate font-display text-base font-semibold leading-snug">
+                        {focusBookTitle}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={clearFocus}
+                        className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+                        title="Ask across all books"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 font-display text-base font-semibold leading-snug">
+                      {bookCount > 0 ? "Across your shelves" : "Waiting for a book"}
+                    </p>
+                  )}
+                </div>
                 <button
-                  onClick={clearFocus}
-                  className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-primary/20"
-                  title="Switch to all books"
+                  type="button"
+                  onClick={() => setCompanionCollapsed(true)}
+                  className="rounded-lg p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+                  title="Hide notes (])"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m15 18-6-6 6-6" />
                   </svg>
                 </button>
-              </span>
-            </>
-          ) : (
-            <span className="text-sm text-muted">Searching across all books</span>
-          )}
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-2xl space-y-4">
-            {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-primary/20">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-                    <path d="M8 7h6" />
-                    <path d="M8 11h4" />
-                  </svg>
-                </div>
-                <h2 className="text-lg font-semibold">Ask me anything</h2>
-                <p className="mt-1 max-w-sm text-sm text-muted">
-                  {focusBookId
-                    ? `Ask questions about "${focusBookTitle}"`
-                    : "Ask questions across all your books"}
-                </p>
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  {(focusBookId
-                    ? [
-                        "What is this book about?",
-                        "Who are the main characters?",
-                        "What are the key themes?",
-                      ]
-                    : [
-                        "What common themes appear across my books?",
-                        "Compare the main characters",
-                        "Which book discusses this topic?",
-                      ]
-                  ).map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      onClick={() => {
-                        setInput(suggestion);
-                        textareaRef.current?.focus();
-                      }}
-                      className="rounded-full border border-border px-3.5 py-1.5 text-sm transition-colors hover:bg-surface-hover"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {messages.map((message, i) => {
-              const isUser = message.role === "user";
-              return (
-                <div key={i} className="animate-fade-in">
-                  <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`
-                        max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed
-                        ${isUser
-                          ? "bg-user-bubble text-white"
-                          : "bg-surface border border-border text-foreground"
-                        }
-                      `}
-                    >
-                      {isUser ? (
-                        <div className="whitespace-pre-wrap">{message.content}</div>
-                      ) : (
-                        <div className="prose-ai">
-                          <ReactMarkdown>{message.content}</ReactMarkdown>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {message.sources && message.sources.length > 0 && (
-                    <div className="mt-2 ml-0">
-                      <SourcesList
-                        sources={message.sources}
-                        onCitationClick={(source) =>
-                          setInput(`Open excerpt: ${source.book} ${source.position || ""} "${source.excerpt}"`)
-                        }
-                      />
-                    </div>
-                  )}
-                  {message.specialists && message.specialists.length > 0 && (
-                    <div className="mt-2 ml-0">
-                      <SpecialistReportsList reports={message.specialists} />
-                    </div>
-                  )}
-                  {message.why && (
-                    <div className="mt-2 ml-0">
-                      <WhyPanel why={message.why} />
-                    </div>
-                  )}
-                  {!isUser && (
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        className="rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-foreground"
-                        onClick={() => setInput(`Retry specialist step for: ${messages[i - 1]?.content || ""}`)}
-                      >
-                        Retry from specialist step
-                      </button>
-                      <button
-                        className="rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-foreground"
-                        onClick={() => setInput(`Retry final synthesis for: ${messages[i - 1]?.content || ""}`)}
-                      >
-                        Retry from final step
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {isLoading && thinkingSteps.length > 0 && (
-              <div className="animate-fade-in flex justify-start">
-                <div className="max-w-[85%] rounded-2xl border border-border bg-surface px-4 py-3">
-                  <div className="space-y-1.5">
-                    {thinkingSteps.map((step, i) => {
-                      const isLatest = i === thinkingSteps.length - 1;
-                      return (
-                        <div
-                          key={i}
-                          className={`flex items-center gap-2 text-xs transition-opacity ${
-                            isLatest ? "text-foreground" : "text-muted opacity-60"
-                          }`}
-                        >
-                          <span className="shrink-0">
-                            {isLatest ? (
-                              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
-                                <polyline points="20 6 9 17 4 12" />
-                              </svg>
-                            )}
-                          </span>
-                          <span>{step}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {isLoading && thinkingSteps.length === 0 && messages[messages.length - 1]?.role === "user" && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl border border-border bg-surface px-4 py-1">
-                  <div className="flex items-center gap-1.5 px-1 py-2">
-                    <div className="typing-dot h-2 w-2 rounded-full bg-muted" />
-                    <div className="typing-dot h-2 w-2 rounded-full bg-muted" />
-                    <div className="typing-dot h-2 w-2 rounded-full bg-muted" />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        {/* Input bar */}
-        <div className="border-t border-border px-6 py-3">
-          <div className="mx-auto flex max-w-2xl items-end gap-3">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                focusBookId
-                  ? `Ask about "${focusBookTitle}"...`
-                  : "Ask about your books..."
-              }
-              rows={1}
-              className="flex-1 resize-none rounded-xl border border-border bg-surface px-4 py-3 text-[15px] outline-none transition-colors placeholder:text-muted focus:border-primary"
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!input.trim() || isLoading}
-              className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl bg-primary text-white transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:hover:bg-primary"
-            >
-              {isLoading ? (
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m5 12 7-7 7 7" />
-                  <path d="M12 19V5" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </div>
-      </main>
-
-      {settingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-2xl border border-border bg-background p-5 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold">AI Personality Settings</h3>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                className="rounded p-1 text-muted hover:text-foreground"
-                title="Close"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted">Response language</label>
-                <select
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-                  value={settings.language}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, language: e.target.value }))}
-                >
-                  {["Auto", "English", "Norwegian", "Spanish", "French", "German"].map((lang) => (
-                    <option key={lang} value={lang}>{lang}</option>
-                  ))}
-                </select>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted">Tone</label>
-                <select
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-                  value={settings.tone}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, tone: e.target.value }))}
-                >
-                  {["Scientific", "Casual", "Teacher-like", "Concise", "Custom"].map((tone) => (
-                    <option key={tone} value={tone}>{tone}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted">Custom instructions</label>
-                <textarea
-                  value={settings.customInstructions}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, customInstructions: e.target.value }))}
-                  rows={4}
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-                  placeholder="Example: Focus on military strategy and compare contradictions between books."
-                />
-              </div>
-
-              <div className="rounded-lg border border-border bg-surface p-3">
-                <label className="mb-2 flex items-center gap-2 text-xs font-medium text-muted">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings.groundedMode)}
-                    onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, groundedMode: e.target.checked }))
-                    }
-                  />
-                  Strict grounded mode (return "insufficient evidence" when uncited)
-                </label>
-                <div className="grid grid-cols-1 gap-2">
-                  <input
-                    value={settings.modelRouting?.specialistModelId || ""}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        modelRouting: { ...(prev.modelRouting || {}), specialistModelId: e.target.value },
-                      }))
-                    }
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
-                    placeholder="Specialist model ID"
-                  />
-                  <input
-                    value={settings.modelRouting?.orchestratorModelId || ""}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        modelRouting: { ...(prev.modelRouting || {}), orchestratorModelId: e.target.value },
-                      }))
-                    }
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
-                    placeholder="Orchestrator model ID"
-                  />
-                  <input
-                    value={settings.modelRouting?.extractionModelId || ""}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        modelRouting: { ...(prev.modelRouting || {}), extractionModelId: e.target.value },
-                      }))
-                    }
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
-                    placeholder="Extraction/profile model ID"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted">Focus areas</label>
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {settings.focusAreas.map((area) => (
-                    <span key={area} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                      {area}
-                      <button
-                        onClick={() =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            focusAreas: prev.focusAreas.filter((a) => a !== area),
-                          }))
-                        }
-                        className="rounded p-0.5 hover:bg-primary/20"
-                        title="Remove"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={focusAreaInput}
-                    onChange={(e) => setFocusAreaInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addFocusArea();
-                      }
-                    }}
-                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-                    placeholder="Add focus area..."
-                  />
+              <div className="shrink-0 border-b border-border/30 px-5 py-3">
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={addFocusArea}
-                    className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
+                    type="button"
+                    onClick={() => setChatsOpen((prev) => !prev)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
                   >
-                    Add
+                    <span className="text-[12px] font-medium text-muted">Past notes</span>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={`text-muted transition-transform ${chatsOpen ? "rotate-180" : ""}`}
+                    >
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startNewChat();
+                    }}
+                    className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
+                  >
+                    + Fresh page
                   </button>
                 </div>
+
+                {chatsOpen && (
+                  <div className="mt-2.5 max-h-[22vh] overflow-y-auto">
+                    {chatHistory.length === 0 ? (
+                      <p className="py-2 text-xs leading-relaxed text-muted">
+                        Conversations you start will land here.
+                      </p>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {chatHistory.slice(0, 20).map((chat) => (
+                          <div
+                            key={chat.id}
+                            className={`group flex items-start gap-1 rounded-xl px-2.5 py-2 transition-colors ${
+                              chatId === chat.id
+                                ? "bg-primary/10 text-primary"
+                                : "text-foreground hover:bg-surface-hover"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => loadChatById(chat.id)}
+                              className="min-w-0 flex-1 text-left text-[13px]"
+                            >
+                              <p className="truncate font-medium">{chat.title}</p>
+                              <p className="mt-0.5 truncate text-[11px] text-muted">
+                                {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
+                              </p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => void deleteChatById(chat.id, e)}
+                              className="mt-0.5 shrink-0 rounded p-1 text-muted opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                              title="Delete"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 6h18" />
+                                <path d="M8 6V4h8v2" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-border bg-surface p-3">
-              <button
-                onClick={() => fetch("/api/reindex", { method: "POST" })}
-                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
-              >
-                Re-index manager
-              </button>
-              <button
-                onClick={() => fetch("/api/eval").then((r) => r.json()).then((d) => alert(`Eval score: ${d.score}`))}
-                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
-              >
-                Run evaluation harness
-              </button>
-              <button
-                onClick={() => fetch("/api/safety", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "backup" }) })}
-                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
-              >
-                Backup now
-              </button>
-              <button
-                onClick={async () => {
-                  const res = await fetch("/api/share", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ bookIds: focusBookId ? [focusBookId] : [] }),
-                  });
-                  const data = await res.json();
-                  if (data?.url) alert(`Share link created: ${data.url}`);
-                }}
-                className="rounded-lg border border-border px-3 py-2 text-xs text-left"
-              >
-                Create read-only snapshot link
-              </button>
-            </div>
+              <div className="flex-1 overflow-y-auto px-5 py-5">
+                <div className="space-y-8">
+                  {messages.length === 0 && (
+                    <div className="animate-fade-in py-6">
+                      {companionMode ? (
+                        <>
+                          <p className="font-display text-xl font-semibold leading-snug tracking-tight">
+                            {bookCount > 0
+                              ? `Ready whenever you are — ${bookCount} book${bookCount === 1 ? "" : "s"} on the shelves.`
+                              : "Drop a book on the left, then ask anything."}
+                          </p>
+                          {titlesPhrase && (
+                            <p className="mt-3 text-sm leading-relaxed text-muted">
+                              Lately that includes {titlesPhrase}
+                            </p>
+                          )}
+                          <div className="mt-6 flex flex-col gap-2">
+                            {companionSuggestions.map((suggestion) => (
+                              <button
+                                key={suggestion}
+                                type="button"
+                                onClick={() => {
+                                  setInput(suggestion);
+                                  textareaRef.current?.focus();
+                                }}
+                                className="rounded-xl border border-transparent px-3 py-2.5 text-left text-[14px] text-muted transition-colors hover:border-border/50 hover:bg-surface-hover hover:text-foreground"
+                              >
+                                {suggestion}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="font-display text-lg text-muted">Ask about a book</p>
+                      )}
+                    </div>
+                  )}
 
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => setSettingsOpen(false)}
-                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveSettings}
-                className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-              >
-                Save settings
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                  {messages.map((message, i) => {
+                    const isUser = message.role === "user";
+                    return (
+                      <article key={i} className="animate-fade-in">
+                        {isUser ? (
+                          <div className="border-b border-border/30 pb-6">
+                            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                              You asked
+                            </p>
+                            <p className="font-display text-[1.05rem] leading-snug whitespace-pre-wrap">
+                              {message.content}
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-primary/85">
+                              From the pages
+                            </p>
+                            <div className="prose-ai text-[15px]">
+                              <ChatMarkdown content={message.content} />
+                            </div>
+                          </div>
+                        )}
+
+                        {message.sources && message.sources.length > 0 && (
+                          <div className="mt-4">
+                            <SourcesList
+                              sources={message.sources}
+                              onOpenPassage={(source) =>
+                                setPassageTarget({
+                                  bookId: source.bookId,
+                                  book: source.book,
+                                  position: source.position,
+                                  excerpt: source.excerpt,
+                                })
+                              }
+                            />
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+
+                  {showPresence && (
+                    <div className="animate-fade-in space-y-2.5 border-l-2 border-primary/35 pl-4">
+                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                        Looking through
+                      </p>
+                      {thinkingSteps.map((step, i) => {
+                        const isLatest = i === thinkingSteps.length - 1;
+                        return (
+                          <p
+                            key={i}
+                            className={`text-sm ${isLatest ? "text-foreground" : "text-muted opacity-65"}`}
+                          >
+                            {step}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {isLoading &&
+                    thinkingSteps.length === 0 &&
+                    !hasAssistantTokens &&
+                    messages[messages.length - 1]?.role === "user" && (
+                      <p className="animate-fade-in text-sm italic text-muted">Turning a page…</p>
+                    )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-border/35 px-5 py-4">
+                <div className="flex items-end gap-2.5">
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      focusBookId
+                        ? `Ask about ${focusBookTitle}…`
+                        : "Write a note or question…"
+                    }
+                    rows={2}
+                    className="flex-1 resize-none rounded-none border-0 border-b border-border/55 bg-transparent px-0 py-2 text-[15px] outline-none transition-colors placeholder:text-muted focus:border-primary/70"
+                  />
+                  {isLoading ? (
+                    <button
+                      type="button"
+                      onClick={stopGeneration}
+                      className="mb-1 shrink-0 rounded-xl border border-border/50 bg-surface px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
+                      title="Stop"
+                    >
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={sendMessage}
+                      disabled={!input.trim()}
+                      className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-[#e8ddd0] transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:hover:bg-primary"
+                      title="Send"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m5 12 7-7 7 7" />
+                        <path d="M12 19V5" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </aside>
+          </>
+        )}
+      </div>
+
+      <AskDialog
+        open={askMode !== null}
+        title={askDialogTitle}
+        label={askDialogLabel}
+        placeholder={askDialogPlaceholder}
+        confirmLabel={askMode === "quick" ? "Run" : "Ask"}
+        onClose={() => setAskMode(null)}
+        onSubmit={handleAskSubmit}
+      />
+
+      <PassageReader
+        target={passageTarget}
+        onClose={() => setPassageTarget(null)}
+        onAskAbout={(prompt) => {
+          setInput(prompt);
+          textareaRef.current?.focus();
+        }}
+      />
     </div>
   );
 }
