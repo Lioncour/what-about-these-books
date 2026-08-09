@@ -53,14 +53,15 @@ interface BuildInfo {
 
 type AskMode = "character" | "contradictions" | "quick" | null;
 
-const COMPANION_WIDTH_KEY = "wab-companion-width";
-const COMPANION_COLLAPSED_KEY = "wab-companion-collapsed";
+const LIBRARY_WIDTH_KEY = "wab-library-width";
+const LIBRARY_COLLAPSED_KEY = "wab-library-collapsed";
 const LEGACY_SIDEBAR_WIDTH_KEY = "wab-sidebar-width";
 const LEGACY_SIDEBAR_COLLAPSED_KEY = "wab-sidebar-collapsed";
+const LEGACY_COMPANION_COLLAPSED_KEY = "wab-companion-collapsed";
 const ACTIVE_CHAT_KEY = "wab-active-chat-id";
-const COMPANION_MIN = 360;
-const COMPANION_MAX = 560;
-const COMPANION_DEFAULT = 440;
+const LIBRARY_MIN = 260;
+const LIBRARY_MAX = 420;
+const LIBRARY_DEFAULT = 340;
 
 function isAbortError(err: unknown): boolean {
   return (
@@ -69,8 +70,8 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
-function clampCompanionWidth(width: number): number {
-  return Math.min(COMPANION_MAX, Math.max(COMPANION_MIN, width));
+function clampLibraryWidth(width: number): number {
+  return Math.min(LIBRARY_MAX, Math.max(LIBRARY_MIN, width));
 }
 
 export default function Home() {
@@ -90,8 +91,8 @@ export default function Home() {
   const [passageTarget, setPassageTarget] = useState<PassageReaderTarget | null>(null);
   const [bookCount, setBookCount] = useState(0);
   const [recentTitles, setRecentTitles] = useState<string[]>([]);
-  const [companionWidth, setCompanionWidth] = useState(COMPANION_DEFAULT);
-  const [companionCollapsed, setCompanionCollapsed] = useState(false);
+  const [libraryWidth, setLibraryWidth] = useState(LIBRARY_DEFAULT);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [hasAssistantTokens, setHasAssistantTokens] = useState(false);
 
   const libraryRef = useRef<BookLibraryHandle>(null);
@@ -103,16 +104,17 @@ export default function Home() {
   useEffect(() => {
     try {
       const storedWidth =
-        localStorage.getItem(COMPANION_WIDTH_KEY) ||
+        localStorage.getItem(LIBRARY_WIDTH_KEY) ||
         localStorage.getItem(LEGACY_SIDEBAR_WIDTH_KEY);
       if (storedWidth) {
         const parsed = Number(storedWidth);
-        if (Number.isFinite(parsed)) setCompanionWidth(clampCompanionWidth(parsed));
+        if (Number.isFinite(parsed)) setLibraryWidth(clampLibraryWidth(parsed));
       }
       const collapsed =
-        localStorage.getItem(COMPANION_COLLAPSED_KEY) ??
-        localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY);
-      setCompanionCollapsed(collapsed === "1");
+        localStorage.getItem(LIBRARY_COLLAPSED_KEY) ??
+        localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY) ??
+        localStorage.getItem(LEGACY_COMPANION_COLLAPSED_KEY);
+      setLibraryCollapsed(collapsed === "1");
     } catch {
       /* ignore */
     }
@@ -120,19 +122,19 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(COMPANION_WIDTH_KEY, String(companionWidth));
+      localStorage.setItem(LIBRARY_WIDTH_KEY, String(libraryWidth));
     } catch {
       /* ignore */
     }
-  }, [companionWidth]);
+  }, [libraryWidth]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(COMPANION_COLLAPSED_KEY, companionCollapsed ? "1" : "0");
+      localStorage.setItem(LIBRARY_COLLAPSED_KEY, libraryCollapsed ? "1" : "0");
     } catch {
       /* ignore */
     }
-  }, [companionCollapsed]);
+  }, [libraryCollapsed]);
 
   useEffect(() => {
     fetch("/api/config")
@@ -191,10 +193,10 @@ export default function Home() {
 
       if (event.key === "]") {
         event.preventDefault();
-        setCompanionCollapsed((prev) => !prev);
+        setLibraryCollapsed((prev) => !prev);
       } else if (event.key === "[") {
         event.preventDefault();
-        setCompanionCollapsed(false);
+        setLibraryCollapsed(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -203,8 +205,8 @@ export default function Home() {
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
-      if (!resizingRef.current || companionCollapsed) return;
-      setCompanionWidth(clampCompanionWidth(window.innerWidth - event.clientX));
+      if (!resizingRef.current || libraryCollapsed) return;
+      setLibraryWidth(clampLibraryWidth(event.clientX));
     };
     const onMouseUp = () => {
       resizingRef.current = false;
@@ -217,9 +219,9 @@ export default function Home() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [companionCollapsed]);
+  }, [libraryCollapsed]);
 
-  const startCompanionResize = useCallback((event: React.MouseEvent) => {
+  const startLibraryResize = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     resizingRef.current = true;
     document.body.style.cursor = "col-resize";
@@ -810,14 +812,14 @@ export default function Home() {
           <p className="mt-0.5 text-sm text-muted">A reading room for the books you keep</p>
         </div>
         <AwsStatusBadge />
-        {companionCollapsed && (
+        {libraryCollapsed && (
           <button
             type="button"
-            onClick={() => setCompanionCollapsed(false)}
+            onClick={() => setLibraryCollapsed(false)}
             className="rounded-xl border border-border/50 bg-surface px-3.5 py-2 text-sm text-muted transition-colors hover:border-border hover:text-foreground"
-            title="Open companion (])"
+            title="Show library (])"
           >
-            Notes
+            Library
           </button>
         )}
         <Link
@@ -851,322 +853,313 @@ export default function Home() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* Library stage — the room */}
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8 sm:py-7">
-            {!publicMode && (
-              <div className="max-w-xl">
-                <UploadArea
-                  onBookLoaded={handleBookLoaded}
-                  onBooksChanged={handleBooksChanged}
-                  compact
-                />
-              </div>
-            )}
-
-            <section className="min-h-0 flex-1">
-              <BookLibrary
-                ref={libraryRef}
-                onSelectBook={handleSelectBook}
-                activeBookId={focusBookId}
-                readOnly={publicMode}
-                variant="shelf"
-              />
-            </section>
-          </div>
-        </main>
-
-        {!companionCollapsed && (
+        {!libraryCollapsed && (
           <>
-            <div
-              className="sidebar-resizer"
-              onMouseDown={startCompanionResize}
-              title="Drag to resize"
-              role="separator"
-              aria-orientation="vertical"
-            />
-
-            {/* Companion journal — not a chat clone */}
             <aside
-              className="flex shrink-0 flex-col border-l border-border/40 bg-surface/70 backdrop-blur-[2px]"
-              style={{ width: companionWidth }}
+              className="flex shrink-0 flex-col border-r border-border/40 bg-surface/75"
+              style={{ width: libraryWidth }}
             >
-              <div className="flex items-start gap-3 border-b border-border/35 px-5 py-4">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
-                    Companion notes
-                  </p>
-                  {focusBookId ? (
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <p className="truncate font-display text-base font-semibold leading-snug">
-                        {focusBookTitle}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={clearFocus}
-                        className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
-                        title="Ask across all books"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M18 6 6 18" />
-                          <path d="m6 6 12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="mt-1.5 font-display text-base font-semibold leading-snug">
-                      {bookCount > 0 ? "Across your shelves" : "Waiting for a book"}
-                    </p>
-                  )}
-                </div>
+              <div className="flex items-center justify-between gap-2 border-b border-border/35 px-4 py-3">
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                  Shelves
+                </p>
                 <button
                   type="button"
-                  onClick={() => setCompanionCollapsed(true)}
+                  onClick={() => setLibraryCollapsed(true)}
                   className="rounded-lg p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
-                  title="Hide notes (])"
+                  title="Hide library (])"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="m15 18-6-6 6-6" />
                   </svg>
                 </button>
               </div>
-
-              <div className="shrink-0 border-b border-border/30 px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setChatsOpen((prev) => !prev)}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  >
-                    <span className="text-[12px] font-medium text-muted">Past notes</span>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className={`text-muted transition-transform ${chatsOpen ? "rotate-180" : ""}`}
-                    >
-                      <path d="m6 9 6 6 6-6" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startNewChat();
-                    }}
-                    className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
-                  >
-                    + Fresh page
-                  </button>
-                </div>
-
-                {chatsOpen && (
-                  <div className="mt-2.5 max-h-[22vh] overflow-y-auto">
-                    {chatHistory.length === 0 ? (
-                      <p className="py-2 text-xs leading-relaxed text-muted">
-                        Conversations you start will land here.
-                      </p>
-                    ) : (
-                      <div className="space-y-0.5">
-                        {chatHistory.slice(0, 20).map((chat) => (
-                          <div
-                            key={chat.id}
-                            className={`group flex items-start gap-1 rounded-xl px-2.5 py-2 transition-colors ${
-                              chatId === chat.id
-                                ? "bg-primary/10 text-primary"
-                                : "text-foreground hover:bg-surface-hover"
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => loadChatById(chat.id)}
-                              className="min-w-0 flex-1 text-left text-[13px]"
-                            >
-                              <p className="truncate font-medium">{chat.title}</p>
-                              <p className="mt-0.5 truncate text-[11px] text-muted">
-                                {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
-                              </p>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => void deleteChatById(chat.id, e)}
-                              className="mt-0.5 shrink-0 rounded p-1 text-muted opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
-                              title="Delete"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M3 6h18" />
-                                <path d="M8 6V4h8v2" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                              </svg>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 py-5">
-                <div className="space-y-8">
-                  {messages.length === 0 && (
-                    <div className="animate-fade-in py-6">
-                      {companionMode ? (
-                        <>
-                          <p className="font-display text-xl font-semibold leading-snug tracking-tight">
-                            {bookCount > 0
-                              ? `Ready whenever you are — ${bookCount} book${bookCount === 1 ? "" : "s"} on the shelves.`
-                              : "Drop a book on the left, then ask anything."}
-                          </p>
-                          {titlesPhrase && (
-                            <p className="mt-3 text-sm leading-relaxed text-muted">
-                              Lately that includes {titlesPhrase}
-                            </p>
-                          )}
-                          <div className="mt-6 flex flex-col gap-2">
-                            {companionSuggestions.map((suggestion) => (
-                              <button
-                                key={suggestion}
-                                type="button"
-                                onClick={() => {
-                                  setInput(suggestion);
-                                  textareaRef.current?.focus();
-                                }}
-                                className="rounded-xl border border-transparent px-3 py-2.5 text-left text-[14px] text-muted transition-colors hover:border-border/50 hover:bg-surface-hover hover:text-foreground"
-                              >
-                                {suggestion}
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      ) : (
-                        <p className="font-display text-lg text-muted">Ask about a book</p>
-                      )}
-                    </div>
-                  )}
-
-                  {messages.map((message, i) => {
-                    const isUser = message.role === "user";
-                    return (
-                      <article key={i} className="animate-fade-in">
-                        {isUser ? (
-                          <div className="border-b border-border/30 pb-6">
-                            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
-                              You asked
-                            </p>
-                            <p className="font-display text-[1.05rem] leading-snug whitespace-pre-wrap">
-                              {message.content}
-                            </p>
-                          </div>
-                        ) : (
-                          <div>
-                            <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-primary/85">
-                              From the pages
-                            </p>
-                            <div className="prose-ai text-[15px]">
-                              <ChatMarkdown content={message.content} />
-                            </div>
-                          </div>
-                        )}
-
-                        {message.sources && message.sources.length > 0 && (
-                          <div className="mt-4">
-                            <SourcesList
-                              sources={message.sources}
-                              onOpenPassage={(source) =>
-                                setPassageTarget({
-                                  bookId: source.bookId,
-                                  book: source.book,
-                                  position: source.position,
-                                  excerpt: source.excerpt,
-                                })
-                              }
-                            />
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
-
-                  {showPresence && (
-                    <div className="animate-fade-in space-y-2.5 border-l-2 border-primary/35 pl-4">
-                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
-                        Looking through
-                      </p>
-                      {thinkingSteps.map((step, i) => {
-                        const isLatest = i === thinkingSteps.length - 1;
-                        return (
-                          <p
-                            key={i}
-                            className={`text-sm ${isLatest ? "text-foreground" : "text-muted opacity-65"}`}
-                          >
-                            {step}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {isLoading &&
-                    thinkingSteps.length === 0 &&
-                    !hasAssistantTokens &&
-                    messages[messages.length - 1]?.role === "user" && (
-                      <p className="animate-fade-in text-sm italic text-muted">Turning a page…</p>
-                    )}
-
-                  <div ref={messagesEndRef} />
-                </div>
-              </div>
-
-              <div className="shrink-0 border-t border-border/35 px-5 py-4">
-                <div className="flex items-end gap-2.5">
-                  <textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                      focusBookId
-                        ? `Ask about ${focusBookTitle}…`
-                        : "Write a note or question…"
-                    }
-                    rows={2}
-                    className="flex-1 resize-none rounded-none border-0 border-b border-border/55 bg-transparent px-0 py-2 text-[15px] outline-none transition-colors placeholder:text-muted focus:border-primary/70"
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+                {!publicMode && (
+                  <UploadArea
+                    onBookLoaded={handleBookLoaded}
+                    onBooksChanged={handleBooksChanged}
+                    compact
                   />
-                  {isLoading ? (
-                    <button
-                      type="button"
-                      onClick={stopGeneration}
-                      className="mb-1 shrink-0 rounded-xl border border-border/50 bg-surface px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
-                      title="Stop"
-                    >
-                      Stop
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={sendMessage}
-                      disabled={!input.trim()}
-                      className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-[#e8ddd0] transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:hover:bg-primary"
-                      title="Send"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="m5 12 7-7 7 7" />
-                        <path d="M12 19V5" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
+                )}
+                <BookLibrary
+                  ref={libraryRef}
+                  onSelectBook={handleSelectBook}
+                  activeBookId={focusBookId}
+                  readOnly={publicMode}
+                  variant="rail"
+                />
               </div>
             </aside>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={startLibraryResize}
+              title="Drag to resize"
+              role="separator"
+              aria-orientation="vertical"
+            />
           </>
         )}
+
+        <main className="flex min-w-0 flex-1 flex-col bg-surface/40">
+          <div className="flex items-start gap-3 border-b border-border/35 px-6 py-4 sm:px-10 lg:px-14">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                Companion notes
+              </p>
+              {focusBookId ? (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <p className="truncate font-display text-lg font-semibold leading-snug sm:text-xl">
+                    {focusBookTitle}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={clearFocus}
+                    className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+                    title="Ask across all books"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18" />
+                      <path d="m6 6 12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <p className="mt-1.5 font-display text-lg font-semibold leading-snug sm:text-xl">
+                  {bookCount > 0 ? "Across your shelves" : "Waiting for a book"}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setChatsOpen((prev) => !prev)}
+                className="flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-foreground"
+              >
+                Past notes
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={`transition-transform ${chatsOpen ? "rotate-180" : ""}`}
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
+              >
+                + Fresh page
+              </button>
+            </div>
+          </div>
+
+          {chatsOpen && (
+            <div className="max-h-[22vh] overflow-y-auto border-b border-border/30 px-6 py-3 sm:px-10 lg:px-14">
+              {chatHistory.length === 0 ? (
+                <p className="py-1 text-xs leading-relaxed text-muted">
+                  Conversations you start will land here.
+                </p>
+              ) : (
+                <div className="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                  {chatHistory.slice(0, 20).map((chat) => (
+                    <div
+                      key={chat.id}
+                      className={`group flex items-start gap-1 rounded-xl px-2.5 py-2 transition-colors ${
+                        chatId === chat.id
+                          ? "bg-primary/10 text-primary"
+                          : "text-foreground hover:bg-surface-hover"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => loadChatById(chat.id)}
+                        className="min-w-0 flex-1 text-left text-[13px]"
+                      >
+                        <p className="truncate font-medium">{chat.title}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-muted">
+                          {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => void deleteChatById(chat.id, e)}
+                        className="mt-0.5 shrink-0 rounded p-1 text-muted opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                        title="Delete"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18" />
+                          <path d="M8 6V4h8v2" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-10 lg:px-14">
+            <div className="mx-auto w-full max-w-3xl space-y-10">
+              {messages.length === 0 && (
+                <div className="animate-fade-in py-10 sm:py-16">
+                  {companionMode ? (
+                    <>
+                      <p className="max-w-2xl font-display text-2xl font-semibold leading-snug tracking-tight sm:text-3xl">
+                        {bookCount > 0
+                          ? `Ready whenever you are — ${bookCount} book${bookCount === 1 ? "" : "s"} on the shelves.`
+                          : "Add a book on the left, then ask anything."}
+                      </p>
+                      {titlesPhrase && (
+                        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted">
+                          Lately that includes {titlesPhrase}
+                        </p>
+                      )}
+                      <div className="mt-8 flex flex-wrap gap-2.5">
+                        {companionSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion}
+                            type="button"
+                            onClick={() => {
+                              setInput(suggestion);
+                              textareaRef.current?.focus();
+                            }}
+                            className="rounded-xl border border-border/45 bg-surface/50 px-4 py-2.5 text-left text-[14px] text-muted transition-colors hover:border-border hover:bg-surface-hover hover:text-foreground"
+                          >
+                            {suggestion}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="font-display text-xl text-muted">Ask about a book</p>
+                  )}
+                </div>
+              )}
+
+              {messages.map((message, i) => {
+                const isUser = message.role === "user";
+                return (
+                  <article key={i} className="animate-fade-in">
+                    {isUser ? (
+                      <div className="border-b border-border/30 pb-7">
+                        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                          You asked
+                        </p>
+                        <p className="font-display text-xl leading-snug whitespace-pre-wrap sm:text-[1.35rem]">
+                          {message.content}
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-primary/85">
+                          From the pages
+                        </p>
+                        <div className="prose-ai text-[16px] sm:text-[17px]">
+                          <ChatMarkdown content={message.content} />
+                        </div>
+                      </div>
+                    )}
+
+                    {message.sources && message.sources.length > 0 && (
+                      <div className="mt-5">
+                        <SourcesList
+                          sources={message.sources}
+                          onOpenPassage={(source) =>
+                            setPassageTarget({
+                              bookId: source.bookId,
+                              book: source.book,
+                              position: source.position,
+                              excerpt: source.excerpt,
+                            })
+                          }
+                        />
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+
+              {showPresence && (
+                <div className="animate-fade-in space-y-2.5 border-l-2 border-primary/35 pl-4">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                    Looking through
+                  </p>
+                  {thinkingSteps.map((step, i) => {
+                    const isLatest = i === thinkingSteps.length - 1;
+                    return (
+                      <p
+                        key={i}
+                        className={`text-sm ${isLatest ? "text-foreground" : "text-muted opacity-65"}`}
+                      >
+                        {step}
+                      </p>
+                    );
+                  })}
+                </div>
+              )}
+
+              {isLoading &&
+                thinkingSteps.length === 0 &&
+                !hasAssistantTokens &&
+                messages[messages.length - 1]?.role === "user" && (
+                  <p className="animate-fade-in text-sm italic text-muted">Turning a page…</p>
+                )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+
+          <div className="shrink-0 border-t border-border/35 px-6 py-5 sm:px-10 lg:px-14">
+            <div className="mx-auto flex w-full max-w-3xl items-end gap-3">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  focusBookId
+                    ? `Ask about ${focusBookTitle}…`
+                    : "Write a note or question…"
+                }
+                rows={2}
+                className="flex-1 resize-none rounded-none border-0 border-b border-border/55 bg-transparent px-0 py-2.5 text-base outline-none transition-colors placeholder:text-muted focus:border-primary/70"
+              />
+              {isLoading ? (
+                <button
+                  type="button"
+                  onClick={stopGeneration}
+                  className="mb-1 shrink-0 rounded-xl border border-border/50 bg-surface px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
+                  title="Stop"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={sendMessage}
+                  disabled={!input.trim()}
+                  className="mb-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-[#e8ddd0] transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:hover:bg-primary"
+                  title="Send"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m5 12 7-7 7 7" />
+                    <path d="M12 19V5" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        </main>
       </div>
 
       <AskDialog
