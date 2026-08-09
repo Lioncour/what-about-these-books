@@ -1,12 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="#4f46e5"/>
-  <g transform="translate(4, 6)" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M2 18V3a2 2 0 0 1 2-2h16v18H4a2 2 0 0 0 0 4h16" fill="none"/>
-    <path d="M6 6h8" />
-    <path d="M6 10h5" />
-    <circle cx="18" cy="5" r="4" fill="white" stroke="none"/>
-    <circle cx="16.5" cy="5" r="0.7" fill="#4f46e5"/>
-    <circle cx="18" cy="5" r="0.7" fill="#4f46e5"/>
-    <circle cx="19.5" cy="5" r="0.7" fill="#4f46e5"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="What About This Book">
+  <rect width="128" height="128" rx="28" fill="#C9B79F"/>
+  <!-- Cover base -->
+  <path d="M20 40c18-2 30 4 44 16 14-12 26-18 44-16v54c-18-4-30 2-44 14-14-12-26-18-44-14V40Z" fill="#B08968"/>
+  <!-- Pages -->
+  <path d="M26 42c16-1 26 5 38 15V98c-12-9-22-14-38-12V42Z" fill="#E8DDD0" stroke="#4F644D" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M102 42c-16-1-26 5-38 15V98c12-9 22-14 38-12V42Z" fill="#E8DDD0" stroke="#4F644D" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Text lines left -->
+  <path d="M34 56h18M34 66h16M34 76h14M34 86h12" stroke="#4F644D" stroke-width="3.5" stroke-linecap="round" opacity="0.55"/>
+  <!-- Text lines right -->
+  <path d="M76 56h18M78 66h16M80 76h14M82 86h12" stroke="#4F644D" stroke-width="3.5" stroke-linecap="round" opacity="0.55"/>
+  <!-- Sparkles on pages -->
+  <path d="M40 48l1.2 3.2 3.2 1.2-3.2 1.2-1.2 3.2-1.2-3.2-3.2-1.2 3.2-1.2z" fill="#B08968"/>
+  <path d="M90 88l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z" fill="#5A6F58"/>
+  <!-- Floating dots -->
+  <circle cx="54" cy="22" r="4.5" fill="#B08968"/>
+  <circle cx="68" cy="18" r="3.2" fill="#E8DDD0" stroke="#4F644D" stroke-width="2"/>
+  <circle cx="80" cy="24" r="3.8" fill="#7A9A90"/>
+  <!-- Tiny plus clusters -->
+  <path d="M44 26h0M42 26h4M44 24v4" stroke="#4F644D" stroke-width="2" stroke-linecap="round"/>
+  <path d="M90 20h0M88 20h4M90 18v4" stroke="#B08968" stroke-width="2" stroke-linecap="round"/>
 </svg>
