@@ -14,8 +14,18 @@ interface FileJob {
   status: "queued" | "processing" | "done" | "error";
   steps: string[];
   error?: string;
+  errorKind?: "duplicate" | "other";
   result?: { id: string; title: string; wordCount: number };
   abortController?: AbortController;
+}
+
+const DUPLICATE_ERROR_PREFIX = "DUPLICATE:";
+
+class DuplicateBookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateBookError";
+  }
 }
 
 let jobIdCounter = 0;
@@ -59,13 +69,16 @@ async function processOneFile(
       if (colonIdx === -1) continue;
 
       const type = line.slice(0, colonIdx);
-      const data = line.slice(colonIdx + 1);
+      const data = line.slice(colonIdx + 1).replace(/\r$/, "").trimStart();
 
       if (type === "PROGRESS") {
         onProgress(data);
       } else if (type === "DONE") {
         return JSON.parse(data);
       } else if (type === "ERROR") {
+        if (data.startsWith(DUPLICATE_ERROR_PREFIX)) {
+          throw new DuplicateBookError(data.slice(DUPLICATE_ERROR_PREFIX.length));
+        }
         throw new Error(data);
       }
     }
@@ -117,9 +130,18 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
         onBooksChanged?.();
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed";
+        const isDuplicate =
+          err instanceof DuplicateBookError ||
+          (err instanceof Error && err.name === "DuplicateBookError") ||
+          /have this book already/i.test(msg);
         next.status = "error";
         next.error = msg;
-        updateJob(next.id, { status: "error", error: msg });
+        next.errorKind = isDuplicate ? "duplicate" : "other";
+        updateJob(next.id, {
+          status: "error",
+          error: msg,
+          errorKind: next.errorKind,
+        });
       }
     }
 
@@ -222,10 +244,10 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
           className={`
-            cursor-pointer rounded-xl border-2 border-dashed px-3 py-4 text-center transition-all
+            cursor-pointer rounded-2xl border border-dashed px-4 py-5 text-center transition-all
             ${isDragging
-              ? "border-primary bg-primary/5"
-              : "border-border hover:border-primary/50 hover:bg-surface-hover"
+              ? "border-primary bg-primary/8"
+              : "border-border/45 hover:border-primary/40 hover:bg-surface-hover/70"
             }
           `}
         >
@@ -238,13 +260,13 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
             className="hidden"
           />
           <div className="flex items-center justify-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
               <path d="M12 5v14" />
               <path d="M5 12h14" />
             </svg>
             <span className="text-sm font-medium">Add books</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted">Drop or click — PDF, EPUB, TXT</p>
+          <p className="mt-1.5 text-[11px] text-muted">Drop or click — PDF, EPUB, TXT</p>
         </div>
 
         {error && (
@@ -278,7 +300,17 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                       </svg>
                     )}
                     {job.status === "error" && (
-                      <span className="text-[10px] text-red-500">Failed</span>
+                      <span
+                        className={
+                          job.errorKind === "duplicate"
+                            ? "text-[10px] text-amber-600 dark:text-amber-400"
+                            : "text-[10px] text-red-500"
+                        }
+                      >
+                        {job.errorKind === "duplicate"
+                          ? "Have this book already"
+                          : "Failed"}
+                      </span>
                     )}
                   </span>
                 </div>
@@ -296,7 +328,27 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                   </div>
                 )}
                 {job.status === "error" && job.error && (
-                  <p className="mt-1 text-[11px] text-red-500">{job.error}</p>
+                  <p
+                    className={
+                      job.errorKind === "duplicate"
+                        ? "mt-1 text-[11px] text-amber-600 dark:text-amber-400"
+                        : "mt-1 text-[11px] text-red-500"
+                    }
+                  >
+                    {job.error}
+                  </p>
+                )}
+                {job.status === "done" && job.result && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenChat(job.result!);
+                    }}
+                    className="mt-1.5 text-[11px] font-medium text-primary hover:underline"
+                  >
+                    Ask about this book →
+                  </button>
                 )}
               </div>
             ))}
@@ -396,7 +448,17 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                       </svg>
                     )}
                     {job.status === "error" && (
-                      <span className="text-xs text-red-500">Failed</span>
+                      <span
+                        className={
+                          job.errorKind === "duplicate"
+                            ? "text-xs text-amber-600 dark:text-amber-400"
+                            : "text-xs text-red-500"
+                        }
+                      >
+                        {job.errorKind === "duplicate"
+                          ? "Have this book already"
+                          : "Failed"}
+                      </span>
                     )}
                   </span>
                 </div>
@@ -435,7 +497,15 @@ export default function UploadArea({ onBookLoaded, onBooksChanged, compact }: Up
                 )}
 
                 {job.status === "error" && job.error && (
-                  <p className="mt-1 text-xs text-red-500">{job.error}</p>
+                  <p
+                    className={
+                      job.errorKind === "duplicate"
+                        ? "mt-1 text-xs text-amber-600 dark:text-amber-400"
+                        : "mt-1 text-xs text-red-500"
+                    }
+                  >
+                    {job.error}
+                  </p>
                 )}
 
                 {job.status === "done" && job.result && (

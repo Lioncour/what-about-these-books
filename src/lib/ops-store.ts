@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "crypto";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, ensureDataDir, ensureDir } from "@/lib/runtime-config";
 
@@ -8,6 +8,7 @@ const SAVED_SEARCH_FILE = join(OPS_DIR, "saved-searches.json");
 const SHARE_FILE = join(OPS_DIR, "shares.json");
 const MIGRATION_FILE = join(OPS_DIR, "migrations.json");
 const BACKUP_DIR = join(DATA_DIR, "backups");
+const WORKSPACE_FILE = join(OPS_DIR, "workspace-notes.json");
 
 export interface SavedSearch {
   id: string;
@@ -30,6 +31,13 @@ export interface ShareLink {
   redactTerms: string[];
   createdAt: string;
   expiresAt?: string;
+}
+
+export interface WorkspaceNote {
+  id: string;
+  text: string;
+  source?: string;
+  createdAt: string;
 }
 
 function ensureOps(): void {
@@ -71,6 +79,44 @@ export function saveSavedSearch(search: Omit<SavedSearch, "id" | "createdAt"> & 
 
 export function deleteSavedSearch(id: string): void {
   saveJson(SAVED_SEARCH_FILE, listSavedSearches().filter((r) => r.id !== id));
+}
+
+export function listWorkspaceNotes(): WorkspaceNote[] {
+  return loadJson<WorkspaceNote[]>(WORKSPACE_FILE, []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function saveWorkspaceNote(note: { id?: string; text: string; source?: string }): WorkspaceNote {
+  const rows = listWorkspaceNotes().filter((r) => r.id !== note.id);
+  const next: WorkspaceNote = {
+    id: note.id || `note-${Date.now()}`,
+    text: note.text.trim(),
+    source: note.source?.trim() || undefined,
+    createdAt: new Date().toISOString(),
+  };
+  rows.push(next);
+  saveJson(WORKSPACE_FILE, rows);
+  return next;
+}
+
+export function deleteWorkspaceNote(id: string): void {
+  saveJson(WORKSPACE_FILE, listWorkspaceNotes().filter((r) => r.id !== id));
+}
+
+export function exportWorkspaceMarkdown(): string {
+  const notes = listWorkspaceNotes();
+  const lines: string[] = ["# Research Workspace Export", ""];
+  if (!notes.length) {
+    lines.push("_No notes saved yet._");
+    return lines.join("\n");
+  }
+  for (const note of notes) {
+    lines.push(`## ${new Date(note.createdAt).toLocaleString()}`);
+    if (note.source) lines.push(`Source: ${note.source}`);
+    lines.push("");
+    lines.push(note.text);
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 export function createShareLink(params: { bookIds: string[]; redactTerms?: string[]; expiresAt?: string }): ShareLink {

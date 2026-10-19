@@ -32,6 +32,14 @@ yarn-error.log*
 # env files
 .env
 .env*.local
+.env.local
+
+# aws / cloud local auth artifacts
+.aws/
+
+# local debug payloads / traces
+tmp-bedrock-*.json
+*.secret.json
 
 # vercel
 .vercel

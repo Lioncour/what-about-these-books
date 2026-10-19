@@ -7,6 +7,12 @@
   {
     "id": "skippy-mentions",
     "question": "Where is Skippy mentioned?",
-    "expectedCitationContains": ["Skippy"]
+    "expectedCitationContains": ["Skippy"],
+    "expectedInRetrieval": ["skippy"]
+  },
+  {
+    "id": "library-theme",
+    "question": "What are the main themes across my books?",
+    "expectedCitationContains": []
   }
 ]

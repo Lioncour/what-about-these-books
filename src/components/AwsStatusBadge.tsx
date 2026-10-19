@@ -55,10 +55,10 @@ export default function AwsStatusBadge() {
 
   const styles =
     status === "connected"
-      ? "border-success/40 bg-success/10 text-success"
+      ? "text-success/90 hover:text-success"
       : status === "checking" || status === "logging-in"
-        ? "border-border/70 bg-background/50 text-muted"
-        : "border-warning/40 bg-warning/10 text-warning";
+        ? "text-muted"
+        : "text-warning hover:text-warning";
 
   const label =
     status === "checking"
@@ -78,7 +78,7 @@ export default function AwsStatusBadge() {
           ? detail || "AWS connected"
           : "Click to sign in with AWS SSO (browser)"
       }
-      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide transition-opacity hover:opacity-80 ${styles}`}
+      className={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium tracking-[0.08em] uppercase transition-colors ${styles}`}
     >
       AWS {label}
     </button>

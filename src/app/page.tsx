@@ -270,7 +270,7 @@ export default function Home() {
     }
   }, []);
 
-  // Remember which chat is active across Settings / remounts
+  // Remember which chat is active while talking (Past notes / Settings remount)
   useEffect(() => {
     try {
       if (chatId) localStorage.setItem(ACTIVE_CHAT_KEY, chatId);
@@ -280,20 +280,30 @@ export default function Home() {
     }
   }, [chatId]);
 
-  // Restore last (or most recent) chat when landing on home
+  // Cold app open → blank page. Same-session remount (e.g. Settings) → resume.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const preferred =
-          typeof window !== "undefined" ? localStorage.getItem(ACTIVE_CHAT_KEY) : null;
+        const sessionKey = "wab-home-session";
+        const freshOpen = sessionStorage.getItem(sessionKey) !== "1";
+        if (freshOpen) {
+          sessionStorage.setItem(sessionKey, "1");
+          localStorage.removeItem(ACTIVE_CHAT_KEY);
+          if (!cancelled) {
+            setMessages([]);
+            setChatId(null);
+          }
+          return;
+        }
+
+        const preferred = localStorage.getItem(ACTIVE_CHAT_KEY);
+        if (!preferred) return;
         const res = await fetch("/api/chats");
         const data = await res.json();
         const chats = (data.chats || []) as ChatSummary[];
-        if (cancelled || !chats.length) return;
-        const targetId =
-          preferred && chats.some((c) => c.id === preferred) ? preferred : chats[0].id;
-        if (!cancelled) await loadChatById(targetId);
+        if (cancelled || !chats.some((c) => c.id === preferred)) return;
+        await loadChatById(preferred);
       } catch {
         /* ignore */
       }
@@ -803,20 +813,20 @@ export default function Home() {
       : "";
   return (
     <div className="flex h-screen flex-col overflow-hidden text-foreground">
-      <header className="flex shrink-0 items-center gap-4 border-b border-border/40 px-6 py-4 sm:px-8">
-        <BrandMark className="h-12 w-12 shrink-0 shadow-sm shadow-black/5" />
+      <header className="app-chrome-header flex shrink-0 items-center gap-3.5 border-b border-border/30 px-6 pb-2.5 pt-1 sm:gap-4 sm:px-8">
+        <BrandMark className="h-11 w-11 shrink-0 sm:h-12 sm:w-12" />
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-xl font-semibold tracking-tight sm:text-2xl">
+          <h1 className="font-display text-xl font-semibold tracking-tight sm:text-[1.65rem]">
             What About This Book?
           </h1>
-          <p className="mt-0.5 text-sm text-muted">A reading room for the books you keep</p>
+          <p className="mt-0.5 text-[13px] text-muted">A reading room for the books you keep</p>
         </div>
         <AwsStatusBadge />
         {libraryCollapsed && (
           <button
             type="button"
             onClick={() => setLibraryCollapsed(false)}
-            className="rounded-xl border border-border/50 bg-surface px-3.5 py-2 text-sm text-muted transition-colors hover:border-border hover:text-foreground"
+            className="rounded-lg px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
             title="Show library (])"
           >
             Library
@@ -824,7 +834,7 @@ export default function Home() {
         )}
         <Link
           href="/settings"
-          className="settings-orb inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border/50 bg-surface text-muted transition-all hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+          className="settings-orb inline-flex h-10 w-10 items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-hover hover:text-primary"
           title={buildTitle ? `Settings · ${buildTitle}` : "Settings"}
           aria-label="Settings"
         >
@@ -856,17 +866,17 @@ export default function Home() {
         {!libraryCollapsed && (
           <>
             <aside
-              className="flex shrink-0 flex-col border-r border-border/40 bg-surface/75"
+              className="flex shrink-0 flex-col border-r border-border/30 bg-surface/55"
               style={{ width: libraryWidth }}
             >
-              <div className="flex items-center justify-between gap-2 border-b border-border/35 px-4 py-3">
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+              <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-3.5">
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
                   Shelves
                 </p>
                 <button
                   type="button"
                   onClick={() => setLibraryCollapsed(true)}
-                  className="rounded-lg p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
                   title="Hide library (])"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -874,7 +884,7 @@ export default function Home() {
                   </svg>
                 </button>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
                 {!publicMode && (
                   <UploadArea
                     onBookLoaded={handleBookLoaded}
@@ -901,21 +911,21 @@ export default function Home() {
           </>
         )}
 
-        <main className="flex min-w-0 flex-1 flex-col bg-surface/40">
-          <div className="flex items-start gap-3 border-b border-border/35 px-6 py-4 sm:px-10 lg:px-14">
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-start gap-3 px-6 py-3.5 sm:px-10 lg:px-14">
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
                 Companion notes
               </p>
               {focusBookId ? (
-                <div className="mt-1.5 flex items-center gap-2">
+                <div className="mt-1 flex items-center gap-2">
                   <p className="truncate font-display text-lg font-semibold leading-snug sm:text-xl">
                     {focusBookTitle}
                   </p>
                   <button
                     type="button"
                     onClick={clearFocus}
-                    className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+                    className="shrink-0 rounded-md p-1 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
                     title="Ask across all books"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -925,16 +935,16 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-                <p className="mt-1.5 font-display text-lg font-semibold leading-snug sm:text-xl">
+                <p className="mt-1 font-display text-lg font-semibold leading-snug sm:text-xl">
                   {bookCount > 0 ? "Across your shelves" : "Waiting for a book"}
                 </p>
               )}
             </div>
-            <div className="flex shrink-0 items-center gap-3">
+            <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
                 onClick={() => setChatsOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-foreground"
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
               >
                 Past notes
                 <svg
@@ -955,28 +965,28 @@ export default function Home() {
               <button
                 type="button"
                 onClick={startNewChat}
-                className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
+                className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-primary transition-colors hover:bg-primary/10 hover:text-primary-hover"
               >
-                + Fresh page
+                Fresh page
               </button>
             </div>
           </div>
 
           {chatsOpen && (
-            <div className="max-h-[22vh] overflow-y-auto border-b border-border/30 px-6 py-3 sm:px-10 lg:px-14">
+            <div className="max-h-[22vh] overflow-y-auto border-y border-border/25 px-6 py-3 sm:px-10 lg:px-14">
               {chatHistory.length === 0 ? (
                 <p className="py-1 text-xs leading-relaxed text-muted">
                   Conversations you start will land here.
                 </p>
               ) : (
-                <div className="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-0.5 sm:grid-cols-2 xl:grid-cols-3">
                   {chatHistory.slice(0, 20).map((chat) => (
                     <div
                       key={chat.id}
-                      className={`group flex items-start gap-1 rounded-xl px-2.5 py-2 transition-colors ${
+                      className={`group flex items-start gap-1 rounded-lg px-2.5 py-2 transition-colors ${
                         chatId === chat.id
                           ? "bg-primary/10 text-primary"
-                          : "text-foreground hover:bg-surface-hover"
+                          : "text-foreground hover:bg-surface-hover/80"
                       }`}
                     >
                       <button
@@ -1009,22 +1019,23 @@ export default function Home() {
           )}
 
           <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-10 lg:px-14">
-            <div className="mx-auto w-full max-w-3xl space-y-10">
+            <div className="mx-auto w-full max-w-3xl space-y-11">
               {messages.length === 0 && (
-                <div className="animate-fade-in py-10 sm:py-16">
+                <div className="animate-rise-in py-8 sm:py-14">
                   {companionMode ? (
                     <>
-                      <p className="max-w-2xl font-display text-2xl font-semibold leading-snug tracking-tight sm:text-3xl">
+                      <BrandMark className="mb-7 h-14 w-14 opacity-90" />
+                      <p className="max-w-2xl font-display text-[1.85rem] font-semibold leading-[1.2] tracking-tight sm:text-[2.15rem]">
                         {bookCount > 0
                           ? `Ready whenever you are — ${bookCount} book${bookCount === 1 ? "" : "s"} on the shelves.`
                           : "Add a book on the left, then ask anything."}
                       </p>
                       {titlesPhrase && (
-                        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted">
+                        <p className="animate-rise-in stagger-1 mt-4 max-w-xl text-[15px] leading-relaxed text-muted">
                           Lately that includes {titlesPhrase}
                         </p>
                       )}
-                      <div className="mt-8 flex flex-wrap gap-2.5">
+                      <div className="animate-rise-in stagger-2 mt-9 flex flex-col items-start gap-3">
                         {companionSuggestions.map((suggestion) => (
                           <button
                             key={suggestion}
@@ -1033,7 +1044,7 @@ export default function Home() {
                               setInput(suggestion);
                               textareaRef.current?.focus();
                             }}
-                            className="rounded-xl border border-border/45 bg-surface/50 px-4 py-2.5 text-left text-[14px] text-muted transition-colors hover:border-border hover:bg-surface-hover hover:text-foreground"
+                            className="prompt-link text-[15px]"
                           >
                             {suggestion}
                           </button>
@@ -1051,8 +1062,8 @@ export default function Home() {
                 return (
                   <article key={i} className="animate-fade-in">
                     {isUser ? (
-                      <div className="border-b border-border/30 pb-7">
-                        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                      <div className="border-b border-border/25 pb-7">
+                        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
                           You asked
                         </p>
                         <p className="font-display text-xl leading-snug whitespace-pre-wrap sm:text-[1.35rem]">
@@ -1061,7 +1072,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <div>
-                        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-primary/85">
+                        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.16em] text-primary/80">
                           From the pages
                         </p>
                         <div className="prose-ai text-[16px] sm:text-[17px]">
@@ -1090,8 +1101,8 @@ export default function Home() {
               })}
 
               {showPresence && (
-                <div className="animate-fade-in space-y-2.5 border-l-2 border-primary/35 pl-4">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                <div className="animate-fade-in space-y-2.5 border-l-2 border-accent/50 pl-4">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
                     Looking through
                   </p>
                   {thinkingSteps.map((step, i) => {
@@ -1119,7 +1130,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-border/35 px-6 py-5 sm:px-10 lg:px-14">
+          <div className="composer-shell shrink-0 px-6 pb-5 pt-3 sm:px-10 lg:px-14">
             <div className="mx-auto flex w-full max-w-3xl items-end gap-3">
               <textarea
                 ref={textareaRef}
@@ -1132,13 +1143,13 @@ export default function Home() {
                     : "Write a note or question…"
                 }
                 rows={2}
-                className="flex-1 resize-none rounded-none border-0 border-b border-border/55 bg-transparent px-0 py-2.5 text-base outline-none transition-colors placeholder:text-muted focus:border-primary/70"
+                className="composer-field flex-1 resize-none rounded-none border-0 border-b border-border/50 bg-transparent px-0 py-2.5 text-base outline-none transition-colors placeholder:text-muted/80"
               />
               {isLoading ? (
                 <button
                   type="button"
                   onClick={stopGeneration}
-                  className="mb-1 shrink-0 rounded-xl border border-border/50 bg-surface px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
+                  className="mb-1 shrink-0 rounded-lg px-3.5 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
                   title="Stop"
                 >
                   Stop
@@ -1148,7 +1159,7 @@ export default function Home() {
                   type="button"
                   onClick={sendMessage}
                   disabled={!input.trim()}
-                  className="mb-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-[#e8ddd0] transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:hover:bg-primary"
+                  className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-[var(--on-primary)] transition-all hover:bg-primary-hover disabled:opacity-35 disabled:hover:bg-primary"
                   title="Send"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

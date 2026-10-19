@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listSeries, saveSeries, deleteSeries } from "@/lib/book-store";
+import {
+  listSeries,
+  saveSeries,
+  deleteSeries,
+  reconcileLibrarySeries,
+} from "@/lib/book-store";
 
 export async function GET() {
   return NextResponse.json({ series: listSeries() });
@@ -8,6 +13,12 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    if (body?.action === "auto-fix" || body?.action === "reconcile") {
+      const result = await reconcileLibrarySeries({
+        allowRemote: body?.allowRemote !== false,
+      });
+      return NextResponse.json({ ok: true, ...result });
+    }
     const name = String(body?.name || "").trim();
     const bookIds = Array.isArray(body?.bookIds)
       ? body.bookIds.map((id: unknown) => String(id))

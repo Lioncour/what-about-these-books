@@ -2,9 +2,26 @@ import { LocalDocumentIndex } from "vectra";
 import { BedrockEmbeddings } from "./bedrock-embeddings";
 import { join } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
-import { homedir } from "os";
+import { DATA_DIR, ensureDir } from "@/lib/runtime-config";
+import {
+  cleanSeriesDisplayName,
+  normalizeSeriesKey,
+  preferSeriesDisplayName,
+} from "@/lib/series-detection";
+import { resolveSeriesName } from "@/lib/series-lookup";
+import {
+  compareSeriesBooks,
+  lookupEditionMetaFromOpenLibrary,
+  resolveLocalSeriesOrder,
+} from "@/lib/series-order";
 
-const DATA_DIR = process.env.DATA_DIR || join(homedir(), ".whataboutthisbook");
+function seriesKeysLooselyMatch(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 8 && b.length >= 8 && (a.includes(b) || b.includes(a));
+}
+
+export { DATA_DIR };
 const INDEX_DIR = join(DATA_DIR, "index");
 const COVERS_DIR = join(DATA_DIR, "covers");
 const TEXTS_DIR = join(DATA_DIR, "texts");
@@ -20,6 +37,11 @@ export interface AISettings {
   customInstructions: string;
   focusAreas: string[];
   groundedMode?: boolean;
+  answerMode?: "Quick" | "Evidence-heavy" | "Exact count" | "Compare books";
+  useConversationMemory?: boolean;
+  countMode?: "whole_word" | "phrase" | "loose";
+  /** When true (default): friend voice, welcome, presence copy. When false: raw answers only. */
+  companionMode?: boolean;
   modelRouting?: {
     specialistModelId?: string;
     orchestratorModelId?: string;
@@ -29,10 +51,14 @@ export interface AISettings {
 
 const DEFAULT_SETTINGS: AISettings = {
   language: "Auto",
-  tone: "Scientific",
+  tone: "Casual",
   customInstructions: "",
   focusAreas: [],
   groundedMode: false,
+  answerMode: "Evidence-heavy",
+  useConversationMemory: true,
+  countMode: "whole_word",
+  companionMode: true,
   modelRouting: {},
 };
 
@@ -46,6 +72,10 @@ interface BookEntry {
   author?: string;
   fileType?: string;
   seriesId?: string;
+  /** Reading / publication order within the series (supports .5 novellas). */
+  seriesOrder?: number;
+  isbn?: string;
+  publishedYear?: number;
 }
 
 export interface SeriesEntry {
@@ -60,12 +90,22 @@ interface BookCatalog {
   series: SeriesEntry[];
 }
 
+function normalizeIdentity(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Author key that treats "Alanson, Craig" and "Craig Alanson" as the same person. */
+function normalizeAuthorKey(input: string): string {
+  const parts = normalizeIdentity(input).split(/\s+/).filter(Boolean).sort();
+  return parts.join(" ");
+}
+
 function ensureDataDir() {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  if (!existsSync(INDEX_DIR)) mkdirSync(INDEX_DIR, { recursive: true });
-  if (!existsSync(COVERS_DIR)) mkdirSync(COVERS_DIR, { recursive: true });
-  if (!existsSync(TEXTS_DIR)) mkdirSync(TEXTS_DIR, { recursive: true });
-  if (!existsSync(SPECIALISTS_DIR)) mkdirSync(SPECIALISTS_DIR, { recursive: true });
+  ensureDir(DATA_DIR);
+  ensureDir(INDEX_DIR);
+  ensureDir(COVERS_DIR);
+  ensureDir(TEXTS_DIR);
+  ensureDir(SPECIALISTS_DIR);
 }
 
 // --- Page-level text storage ---
@@ -82,6 +122,10 @@ export interface BookSpecialistProfile {
   keyTopics: string[];
   notableEntities: string[];
   styleNotes: string[];
+  keyCharacters?: string[];
+  keyLocations?: string[];
+  glossary?: string[];
+  timelineHighlights?: string[];
   updatedAt: string;
 }
 
@@ -133,6 +177,32 @@ function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export type CountMode = "whole_word" | "phrase" | "loose";
+
+function countMatchesInText(text: string, keyword: string, mode: CountMode): number {
+  const normalized = keyword.trim();
+  if (!normalized) return 0;
+  if (mode === "loose") {
+    let count = 0;
+    const lowerText = text.toLowerCase();
+    const lowerKeyword = normalized.toLowerCase();
+    let startIdx = 0;
+    while (true) {
+      const idx = lowerText.indexOf(lowerKeyword, startIdx);
+      if (idx === -1) break;
+      count++;
+      startIdx = idx + lowerKeyword.length;
+    }
+    return count;
+  }
+  if (mode === "phrase") {
+    const re = new RegExp(escapeRegex(normalized), "gi");
+    return (text.match(re) || []).length;
+  }
+  const re = new RegExp(`\\b${escapeRegex(normalized).replace(/\\\s+/g, "\\\\s+")}\\b`, "gi");
+  return (text.match(re) || []).length;
+}
+
 export interface ExactQuoteMatch {
   label: string;
   snippet: string;
@@ -165,6 +235,47 @@ export function searchBookKeyword(
   }
 
   return matches;
+}
+
+export function countBookKeywordMentions(
+  bookId: string,
+  keyword: string,
+  mode: CountMode = "whole_word"
+): number {
+  const pages = loadBookPages(bookId);
+  if (!pages) return 0;
+  return pages.reduce((sum, page) => sum + countMatchesInText(page.text, keyword, mode), 0);
+}
+
+export function countAllBooksKeywordMentions(
+  keyword: string,
+  mode: CountMode = "whole_word"
+): Array<{ bookId: string; bookTitle: string; count: number }> {
+  const catalog = loadCatalog();
+  const rows = catalog.books.map((book) => ({
+    bookId: book.id,
+    bookTitle: book.title,
+    count: countBookKeywordMentions(book.id, keyword, mode),
+  }));
+  return rows.filter((r) => r.count > 0).sort((a, b) => b.count - a.count);
+}
+
+export function countSeriesKeywordMentions(
+  seriesId: string,
+  keyword: string,
+  mode: CountMode = "whole_word"
+): Array<{ bookId: string; bookTitle: string; count: number }> {
+  const catalog = loadCatalog();
+  const series = catalog.series.find((s) => s.id === seriesId);
+  if (!series) return [];
+  const rows = catalog.books
+    .filter((book) => series.bookIds.includes(book.id))
+    .map((book) => ({
+      bookId: book.id,
+      bookTitle: book.title,
+      count: countBookKeywordMentions(book.id, keyword, mode),
+    }));
+  return rows.filter((r) => r.count > 0).sort((a, b) => b.count - a.count);
 }
 
 export function searchAllBooksKeyword(
@@ -326,6 +437,25 @@ export function loadSettings(): AISettings {
       customInstructions: parsed.customInstructions || DEFAULT_SETTINGS.customInstructions,
       focusAreas: Array.isArray(parsed.focusAreas) ? parsed.focusAreas.map(String) : [],
       groundedMode: Boolean(parsed.groundedMode),
+      answerMode:
+        parsed.answerMode === "Quick" ||
+        parsed.answerMode === "Evidence-heavy" ||
+        parsed.answerMode === "Exact count" ||
+        parsed.answerMode === "Compare books"
+          ? parsed.answerMode
+          : DEFAULT_SETTINGS.answerMode,
+      useConversationMemory:
+        typeof parsed.useConversationMemory === "boolean"
+          ? parsed.useConversationMemory
+          : DEFAULT_SETTINGS.useConversationMemory,
+      countMode:
+        parsed.countMode === "whole_word" || parsed.countMode === "phrase" || parsed.countMode === "loose"
+          ? parsed.countMode
+          : DEFAULT_SETTINGS.countMode,
+      companionMode:
+        typeof parsed.companionMode === "boolean"
+          ? parsed.companionMode
+          : DEFAULT_SETTINGS.companionMode,
       modelRouting:
         parsed.modelRouting && typeof parsed.modelRouting === "object"
           ? {
@@ -354,6 +484,25 @@ export function saveSettings(settings: AISettings): void {
     customInstructions: settings.customInstructions || "",
     focusAreas: Array.isArray(settings.focusAreas) ? settings.focusAreas.map(String) : [],
     groundedMode: Boolean(settings.groundedMode),
+    answerMode:
+      settings.answerMode === "Quick" ||
+      settings.answerMode === "Evidence-heavy" ||
+      settings.answerMode === "Exact count" ||
+      settings.answerMode === "Compare books"
+        ? settings.answerMode
+        : DEFAULT_SETTINGS.answerMode,
+    useConversationMemory:
+      typeof settings.useConversationMemory === "boolean"
+        ? settings.useConversationMemory
+        : DEFAULT_SETTINGS.useConversationMemory,
+    countMode:
+      settings.countMode === "whole_word" || settings.countMode === "phrase" || settings.countMode === "loose"
+        ? settings.countMode
+        : DEFAULT_SETTINGS.countMode,
+    companionMode:
+      typeof settings.companionMode === "boolean"
+        ? settings.companionMode
+        : DEFAULT_SETTINGS.companionMode,
     modelRouting: {
       specialistModelId: settings.modelRouting?.specialistModelId || undefined,
       orchestratorModelId: settings.modelRouting?.orchestratorModelId || undefined,
@@ -447,6 +596,13 @@ export async function addBook(
   return entry;
 }
 
+function deleteCoverFiles(bookId: string): void {
+  for (const ext of ["jpg", "png", "gif", "jpeg", "webp"]) {
+    const p = join(COVERS_DIR, `${bookId}.${ext}`);
+    if (existsSync(p)) unlinkSync(p);
+  }
+}
+
 export async function deleteBook(bookId: string): Promise<void> {
   const index = await getIndex();
   await index.deleteDocument(bookId);
@@ -463,6 +619,25 @@ export async function deleteBook(bookId: string): Promise<void> {
   if (existsSync(textPath)) unlinkSync(textPath);
   const specialistPath = join(SPECIALISTS_DIR, `${bookId}.json`);
   if (existsSync(specialistPath)) unlinkSync(specialistPath);
+  deleteCoverFiles(bookId);
+}
+
+export async function deleteAllBooks(): Promise<number> {
+  const ids = listBooks().map((b) => b.id);
+  for (const id of ids) {
+    await deleteBook(id);
+  }
+  return ids.length;
+}
+
+export function findBooksByTitleQuery(query: string): BookEntry[] {
+  const q = query.toLowerCase().trim();
+  if (!q) return [];
+  return listBooks().filter((b) => {
+    const title = b.title.toLowerCase();
+    const fileTitle = b.filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").toLowerCase();
+    return title.includes(q) || fileTitle.includes(q) || q.includes(title);
+  });
 }
 
 export function listBooks(): BookEntry[] {
@@ -480,11 +655,30 @@ export function listSeries(): SeriesEntry[] {
 export function saveSeries(entry: { id?: string; name: string; bookIds: string[] }): SeriesEntry {
   const catalog = loadCatalog();
   const normalizedBookIds = [...new Set(entry.bookIds)];
+  const requestedName = cleanSeriesDisplayName(entry.name.trim()) || entry.name.trim();
+  const requestedKey = normalizeSeriesKey(requestedName);
+  const sameNameExisting = catalog.series.find((s) => {
+    if (s.id === entry.id) return false;
+    const key = normalizeSeriesKey(cleanSeriesDisplayName(s.name) || s.name);
+    return key === requestedKey || seriesKeysLooselyMatch(key, requestedKey);
+  });
+
+  if (!entry.id && sameNameExisting) {
+    sameNameExisting.name = preferSeriesDisplayName(sameNameExisting.name, requestedName);
+    sameNameExisting.bookIds = [...new Set([...sameNameExisting.bookIds, ...normalizedBookIds])];
+    for (const book of catalog.books) {
+      if (sameNameExisting.bookIds.includes(book.id)) {
+        book.seriesId = sameNameExisting.id;
+      }
+    }
+    saveCatalog(catalog);
+    return sameNameExisting;
+  }
 
   if (entry.id) {
     const existing = catalog.series.find((s) => s.id === entry.id);
     if (existing) {
-      existing.name = entry.name;
+      existing.name = requestedName;
       existing.bookIds = normalizedBookIds;
       for (const book of catalog.books) {
         if (normalizedBookIds.includes(book.id)) {
@@ -500,7 +694,7 @@ export function saveSeries(entry: { id?: string; name: string; bookIds: string[]
 
   const created: SeriesEntry = {
     id: `series-${Date.now()}`,
-    name: entry.name,
+    name: requestedName,
     bookIds: normalizedBookIds,
     createdAt: new Date().toISOString(),
   };
@@ -523,6 +717,328 @@ export function deleteSeries(seriesId: string): void {
     }
   }
   saveCatalog(catalog);
+}
+
+export async function reconcileLibrarySeries(opts?: {
+  allowRemote?: boolean;
+}): Promise<{
+  updatedBooks: number;
+  createdSeries: number;
+  mergedSeries: number;
+  removedSeries: number;
+  lookedUp: number;
+  touchedSeries: number;
+  orderedBooks: number;
+}> {
+  const allowRemote = opts?.allowRemote !== false;
+  const catalog = loadCatalog();
+
+  // 1) Resolve a series name per book (local heuristics + optional Open Library).
+  const hints = new Map<string, string>(); // bookId -> series display name
+  let lookedUp = 0;
+  for (const book of catalog.books) {
+    const hint = await resolveSeriesName({
+      filename: book.filename,
+      title: book.title,
+      author: book.author,
+      allowRemote,
+    });
+    if (hint) {
+      hints.set(book.id, hint.name);
+      if (hint.source === "openlibrary" || hint.source === "merged") lookedUp++;
+    }
+    if (allowRemote) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  // 2) Also fold existing series names that are just "Series Book N" / "EPUB" into cleaned keys.
+  const groups = new Map<string, { displayName: string; bookIds: Set<string> }>();
+
+  const addToGroup = (name: string, bookId: string) => {
+    const cleaned = cleanSeriesDisplayName(name) || name;
+    const key = normalizeSeriesKey(cleaned);
+    if (!key || key.length < 3) return;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.displayName = preferSeriesDisplayName(existing.displayName, cleaned);
+      existing.bookIds.add(bookId);
+    } else {
+      groups.set(key, { displayName: cleaned, bookIds: new Set([bookId]) });
+    }
+  };
+
+  for (const book of catalog.books) {
+    const fromHint = hints.get(book.id);
+    if (fromHint) {
+      addToGroup(fromHint, book.id);
+      continue;
+    }
+    // Fall back: if already in a series, try cleaning that series name
+    if (book.seriesId) {
+      const s = catalog.series.find((x) => x.id === book.seriesId);
+      if (s) {
+        const cleaned = cleanSeriesDisplayName(s.name);
+        if (cleaned) addToGroup(cleaned, book.id);
+      }
+    }
+  }
+
+  // Attach stragglers whose title/filename contains an existing series key
+  // (e.g. "Fallout Expeditionary Force Bo..." → Expeditionary Force).
+  for (const book of catalog.books) {
+    if (hints.has(book.id)) continue;
+    const blob = normalizeSeriesKey(`${book.title} ${book.filename}`);
+    if (!blob) continue;
+    for (const [key, group] of groups) {
+      if (key.length < 8) continue;
+      if (blob.includes(key) || key.includes(blob.slice(0, Math.min(blob.length, key.length)))) {
+        // Prefer real containment of the series key inside the book blob
+        if (blob.includes(key)) {
+          group.bookIds.add(book.id);
+          hints.set(book.id, group.displayName);
+          break;
+        }
+      }
+    }
+  }
+
+  // Only keep groups with 2+ books as series (solo "series" folders are noise)
+  // Exception: if we already had a multi-book series key, keep membership even for growth.
+  // Actually user wants all EF books together — even if only 1 matched remote, merge into EF group.
+  // Keep groups with >= 1 book if key looks like a real series; drop format garbage.
+  for (const [key, group] of [...groups.entries()]) {
+    if (/^(epub|pdf|mobi|txt|kindle)$/i.test(group.displayName)) {
+      groups.delete(key);
+    }
+  }
+
+  let updatedBooks = 0;
+  let createdSeries = 0;
+  let mergedSeries = 0;
+  const touchedSeries = new Set<string>();
+  const usedSeriesIds = new Set<string>();
+
+  // 3) For each group, find or create a target series (merge by normalized key).
+  for (const [, group] of groups) {
+    if (group.bookIds.size < 1) continue;
+
+    const matching = catalog.series.filter(
+      (s) => normalizeSeriesKey(cleanSeriesDisplayName(s.name) || s.name) === normalizeSeriesKey(group.displayName)
+    );
+
+    let target: SeriesEntry | undefined = matching.sort((a, b) => b.bookIds.length - a.bookIds.length)[0];
+    if (!target) {
+      // Also match if any existing series key contains / is contained
+      target = catalog.series.find((s) => {
+        const sk = normalizeSeriesKey(cleanSeriesDisplayName(s.name) || s.name);
+        const gk = normalizeSeriesKey(group.displayName);
+        return sk && gk && (sk === gk || (sk.length >= 8 && gk.length >= 8 && (sk.includes(gk) || gk.includes(sk))));
+      });
+    }
+
+    if (!target) {
+      target = {
+        id: `series-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: group.displayName,
+        bookIds: [],
+        createdAt: new Date().toISOString(),
+      };
+      catalog.series.push(target);
+      createdSeries++;
+    } else {
+      const preferred = preferSeriesDisplayName(target.name, group.displayName);
+      if (target.name !== preferred) target.name = preferred;
+      if (matching.length > 1) mergedSeries += matching.length - 1;
+    }
+
+    touchedSeries.add(target.id);
+    usedSeriesIds.add(target.id);
+
+    for (const bookId of group.bookIds) {
+      const book = catalog.books.find((b) => b.id === bookId);
+      if (!book) continue;
+      if (book.seriesId !== target.id) updatedBooks++;
+      book.seriesId = target.id;
+      if (!target.bookIds.includes(book.id)) target.bookIds.push(book.id);
+    }
+
+    // Absorb other matching series into target
+    for (const extra of matching) {
+      if (extra.id === target.id) continue;
+      for (const bookId of extra.bookIds) {
+        const book = catalog.books.find((b) => b.id === bookId);
+        if (!book) continue;
+        book.seriesId = target.id;
+        if (!target.bookIds.includes(bookId)) target.bookIds.push(bookId);
+      }
+      extra.bookIds = [];
+    }
+  }
+
+  // 4b) Author majority vote: if most of an author's books already sit in one series,
+  // pull remaining ungrouped titles by that author into it (covers OL gaps like Gateway).
+  const authorSeriesVotes = new Map<string, Map<string, number>>();
+  for (const book of catalog.books) {
+    const authorKey = normalizeAuthorKey(book.author || "");
+    if (!authorKey || !book.seriesId) continue;
+    if (!authorSeriesVotes.has(authorKey)) authorSeriesVotes.set(authorKey, new Map());
+    const votes = authorSeriesVotes.get(authorKey)!;
+    votes.set(book.seriesId, (votes.get(book.seriesId) || 0) + 1);
+  }
+  for (const book of catalog.books) {
+    if (book.seriesId) continue;
+    const authorKey = normalizeAuthorKey(book.author || "");
+    if (!authorKey) continue;
+    const votes = authorSeriesVotes.get(authorKey);
+    if (!votes || votes.size === 0) continue;
+    const authorBookCount = catalog.books.filter(
+      (b) => normalizeAuthorKey(b.author || "") === authorKey
+    ).length;
+    const [bestSeriesId, bestCount] = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (bestCount >= 3 && bestCount / authorBookCount >= 0.5) {
+      book.seriesId = bestSeriesId;
+      updatedBooks++;
+      const target = catalog.series.find((s) => s.id === bestSeriesId);
+      if (target && !target.bookIds.includes(book.id)) target.bookIds.push(book.id);
+      touchedSeries.add(bestSeriesId);
+    }
+  }
+
+  // 5) Rebuild membership lists; resolve series order / ISBN; drop empty / garbage series.
+  let orderedBooks = 0;
+  for (const book of catalog.books) {
+    const series = book.seriesId
+      ? catalog.series.find((s) => s.id === book.seriesId)
+      : undefined;
+    const localOrder = resolveLocalSeriesOrder({
+      title: book.title,
+      filename: book.filename,
+      author: book.author,
+      seriesName: series?.name,
+      seriesOrder: undefined, // recompute from title/known maps
+    });
+    if (localOrder != null && book.seriesOrder !== localOrder) {
+      book.seriesOrder = localOrder;
+      orderedBooks++;
+    }
+
+    if (allowRemote && (!book.isbn || !book.publishedYear)) {
+      const meta = await lookupEditionMetaFromOpenLibrary(book.title, book.author);
+      if (meta) {
+        if (meta.isbn && !book.isbn) book.isbn = meta.isbn;
+        if (meta.publishedYear && !book.publishedYear) {
+          book.publishedYear = meta.publishedYear;
+        }
+        // If we still have no series order, fall back to publish year as a soft order
+        if (book.seriesOrder == null && meta.publishedYear) {
+          book.seriesOrder = meta.publishedYear;
+          orderedBooks++;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
+  for (const series of catalog.series) {
+    const members = catalog.books.filter((b) => b.seriesId === series.id);
+    members.sort((a, b) =>
+      compareSeriesBooks(
+        { order: a.seriesOrder ?? null, year: a.publishedYear ?? null, title: a.title },
+        { order: b.seriesOrder ?? null, year: b.publishedYear ?? null, title: b.title }
+      )
+    );
+    series.bookIds = members.map((b) => b.id);
+    const cleaned = cleanSeriesDisplayName(series.name);
+    if (cleaned) series.name = cleaned;
+  }
+
+  const before = catalog.series.length;
+  catalog.series = catalog.series.filter((s) => {
+    if (s.bookIds.length === 0) return false;
+    if (/^(epub|pdf|mobi|txt|kindle)$/i.test(s.name)) return false;
+    return true;
+  });
+  const removedSeries = before - catalog.series.length;
+
+  // Clear seriesId on books pointing at removed series
+  const liveIds = new Set(catalog.series.map((s) => s.id));
+  for (const book of catalog.books) {
+    if (book.seriesId && !liveIds.has(book.seriesId)) {
+      book.seriesId = undefined;
+      updatedBooks++;
+    }
+  }
+
+  saveCatalog(catalog);
+  return {
+    updatedBooks,
+    createdSeries,
+    mergedSeries,
+    removedSeries,
+    lookedUp,
+    touchedSeries: touchedSeries.size,
+    orderedBooks,
+  };
+}
+
+/** @deprecated Use reconcileLibrarySeries — kept for older callers. */
+export async function autoFixSeriesByAuthor(): Promise<{
+  updatedBooks: number;
+  createdSeries: number;
+  touchedSeries: number;
+}> {
+  const result = await reconcileLibrarySeries({ allowRemote: true });
+  return {
+    updatedBooks: result.updatedBooks,
+    createdSeries: result.createdSeries,
+    touchedSeries: result.touchedSeries,
+  };
+}
+
+export interface DuplicateGroup {
+  key: string;
+  books: BookEntry[];
+}
+
+export function listDuplicateBookGroups(): DuplicateGroup[] {
+  const catalog = loadCatalog();
+  const groups = new Map<string, BookEntry[]>();
+  for (const book of catalog.books) {
+    const key = `${normalizeIdentity(book.title)}::${normalizeIdentity(book.author || "")}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(book);
+  }
+  return [...groups.entries()]
+    .map(([key, books]) => ({ key, books }))
+    .filter((g) => g.books.length > 1);
+}
+
+export async function mergeDuplicateBooks(
+  primaryBookId: string,
+  duplicateBookId: string
+): Promise<{ kept: string; removed: string }> {
+  if (primaryBookId === duplicateBookId) {
+    throw new Error("Cannot merge the same book.");
+  }
+
+  const primary = getBookById(primaryBookId);
+  const duplicate = getBookById(duplicateBookId);
+  if (!primary || !duplicate) {
+    throw new Error("Both books must exist to merge.");
+  }
+
+  const duplicateSeries = getSeriesForBook(duplicateBookId);
+  if (duplicateSeries) {
+    saveSeries({
+      id: duplicateSeries.id,
+      name: duplicateSeries.name,
+      bookIds: [...new Set(duplicateSeries.bookIds.map((id) => (id === duplicateBookId ? primaryBookId : id)))],
+    });
+  }
+
+  await deleteBook(duplicateBookId);
+  return { kept: primaryBookId, removed: duplicateBookId };
 }
 
 export function getSeriesForBook(bookId: string): SeriesEntry | null {
@@ -591,7 +1107,11 @@ interface ChatEntry {
   bookId: string;
   bookTitle: string;
   title: string;
-  messages: { role: string; content: string }[];
+  messages: {
+    role: string;
+    content: string;
+    sources?: { book: string; excerpt: string; position?: string; bookId?: string }[];
+  }[];
   updatedAt: string;
 }
 

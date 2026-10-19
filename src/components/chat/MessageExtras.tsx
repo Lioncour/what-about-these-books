@@ -36,11 +36,11 @@ export function SourcesList({
   onOpenPassage?: (source: Source) => void;
 }) {
   return (
-    <div className="mt-1 space-y-2.5">
-      <p className="px-0.5 text-[11px] font-medium tracking-wide text-muted">
-        Sources
+    <div className="mt-1 space-y-2">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">
+        On the page
       </p>
-      <div className="flex flex-wrap gap-2.5">
+      <div className="flex flex-col items-start gap-1.5">
         {sources.map((source, i) => {
           const label = source.position
             ? `${source.book} · ${source.position}`
@@ -50,18 +50,19 @@ export function SourcesList({
               key={`${i}-${source.book}-${source.position || "ref"}`}
               type="button"
               onClick={() => onOpenPassage?.(source)}
-              className="rounded-full border border-border/40 bg-surface/50 px-3.5 py-2 text-left text-[12px] text-muted transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+              className="group text-left text-[13px] text-muted transition-colors hover:text-foreground"
               title="Open full passage"
             >
-              <span className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary">
-                {i + 1}
+              <span className="mr-2 font-mono text-[11px] text-accent group-hover:text-primary">
+                {String(i + 1).padStart(2, "0")}
               </span>
-              {label}
+              <span className="border-b border-transparent group-hover:border-primary/35">
+                {label}
+              </span>
             </button>
           );
         })}
       </div>
-      <p className="px-0.5 text-[11px] text-muted/80">Click a source to read the page</p>
     </div>
   );
 }

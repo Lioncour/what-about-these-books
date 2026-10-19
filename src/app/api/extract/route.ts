@@ -1,7 +1,16 @@
 import { NextRequest } from "next/server";
 import { extractText, getDocumentProxy } from "unpdf";
 import EPub from "epub2";
-import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { DEFAULT_BEDROCK_MODEL_ID } from "@/lib/bedrock-client";
+import { callClaudeText, extractJsonObject } from "@/lib/bedrock-claude";
+import {
+  detectSeriesName,
+  normalizeTextId,
+  normalizeSeriesKey,
+  cleanSeriesDisplayName,
+  titleFromFilename,
+} from "@/lib/series-detection";
+import { resolveSeriesName } from "@/lib/series-lookup";
 import { writeFile, unlink, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -11,6 +20,7 @@ import {
   saveCover,
   findBookByFilename,
   saveBookPages,
+  listBooks,
   listSeries,
   saveSeries,
   saveBookSpecialistProfile,
@@ -19,33 +29,46 @@ import type { BookPage } from "@/lib/book-store";
 import { rebuildKnowledgeForBook } from "@/lib/knowledge-store";
 
 export const maxDuration = 300;
-const AWS_REGION = process.env.AWS_REGION || "eu-central-1";
-const BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || "eu.anthropic.claude-opus-4-6-v1";
-const bedrockClient = new BedrockRuntimeClient({ region: AWS_REGION });
 
-function titleFromFilename(filename: string): string {
-  return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
+function findLikelyDuplicate(params: { filename: string; title: string; author?: string }): { id: string; title: string } | null {
+  const existing = findBookByFilename(params.filename);
+  if (existing) return { id: existing.id, title: existing.title };
+  const books = listBooks();
+  const incomingTitle = normalizeTextId(params.title);
+  const incomingFileTitle = normalizeTextId(titleFromFilename(params.filename));
+  const incomingAuthor = params.author?.toLowerCase().trim();
+  for (const book of books) {
+    const bookTitle = normalizeTextId(book.title);
+    const bookFileTitle = normalizeTextId(titleFromFilename(book.filename));
+    const authorMatch =
+      !incomingAuthor || !book.author || book.author.toLowerCase().trim() === incomingAuthor;
+    const titleMatch =
+      incomingTitle === bookTitle ||
+      incomingTitle === bookFileTitle ||
+      incomingFileTitle === bookTitle ||
+      incomingFileTitle === bookFileTitle;
+    if (authorMatch && titleMatch) return { id: book.id, title: book.title };
+  }
+  return null;
 }
 
-function detectSeriesName(filename: string): string | null {
-  const base = titleFromFilename(filename);
-
-  const paren = base.match(/\(([^)]+)\)/);
-  if (paren?.[1]) {
-    const cleaned = paren[1].replace(/#\d+.*$/i, "").trim();
-    if (cleaned.length >= 3) return cleaned;
+function inferSeriesIdFromAuthor(author?: string): string | undefined {
+  if (!author) return undefined;
+  const authorKey = author.toLowerCase().trim();
+  const books = listBooks();
+  const series = listSeries();
+  const counts = new Map<string, number>();
+  for (const s of series) {
+    let count = 0;
+    for (const bookId of s.bookIds) {
+      const book = books.find((b) => b.id === bookId);
+      if (book?.author?.toLowerCase().trim() === authorKey) count++;
+    }
+    if (count > 0) counts.set(s.id, count);
   }
-
-  const dashParts = base.split(" - ").map((p) => p.trim()).filter(Boolean);
-  if (dashParts.length >= 3) {
-    const mid = dashParts[1].replace(/#\d+.*$/i, "").trim();
-    if (mid.length >= 3) return mid;
-  }
-
-  const expeditionary = base.match(/(Expeditionary Force)/i);
-  if (expeditionary) return "Expeditionary Force";
-
-  return null;
+  const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (!best || best[1] < 2) return undefined;
+  return best[0];
 }
 
 async function buildSpecialistProfile(
@@ -55,7 +78,7 @@ async function buildSpecialistProfile(
   onProgress?: (msg: string) => void
 ): Promise<void> {
   const settings = loadSettings();
-  const extractionModelId = settings.modelRouting?.extractionModelId || BEDROCK_MODEL_ID;
+  const extractionModelId = settings.modelRouting?.extractionModelId || DEFAULT_BEDROCK_MODEL_ID;
   const combined = pages
     .slice(0, 40)
     .map((p) => `[${p.label}]\n${p.text}`)
@@ -67,43 +90,24 @@ async function buildSpecialistProfile(
 
   try {
     const prompt =
-      "You are creating a specialist memory profile for one book. Return strict JSON only with keys: summary (string), keyTopics (string[]), notableEntities (string[]), styleNotes (string[]).";
-    const command = new InvokeModelCommand({
-      modelId: extractionModelId,
-      contentType: "application/json",
-      accept: "application/json",
-      body: JSON.stringify({
-        anthropic_version: "bedrock-2023-05-31",
-        max_tokens: 1200,
-        temperature: 0.2,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `${prompt}\n\nBook: ${title}\n\nExtracted passages:\n${combined}`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
-    const response = await bedrockClient.send(command);
-    const bedrockRaw = new TextDecoder().decode(response.body);
-    const bedrockParsed = JSON.parse(bedrockRaw) as {
-      content?: Array<{ type?: string; text?: string }>;
-    };
-
-    const raw = bedrockParsed.content?.find((c) => c.type === "text")?.text || "";
-    const jsonStart = raw.indexOf("{");
-    const jsonEnd = raw.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON in response");
-    const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as {
+      "You are creating a specialist memory profile for one book. Return strict JSON only with keys: summary (string), keyTopics (string[]), notableEntities (string[]), styleNotes (string[]), keyCharacters (string[]), keyLocations (string[]), glossary (string[]), timelineHighlights (string[]).";
+    const raw = await callClaudeText(
+      `${prompt}\n\nBook: ${title}\n\nExtracted passages:\n${combined}`,
+      1200,
+      0.2,
+      extractionModelId
+    );
+    const json = extractJsonObject(raw);
+    if (!json) throw new Error("No JSON in response");
+    const parsed = JSON.parse(json) as {
       summary?: string;
       keyTopics?: string[];
       notableEntities?: string[];
       styleNotes?: string[];
+      keyCharacters?: string[];
+      keyLocations?: string[];
+      glossary?: string[];
+      timelineHighlights?: string[];
     };
 
     saveBookSpecialistProfile({
@@ -115,6 +119,12 @@ async function buildSpecialistProfile(
         ? parsed.notableEntities.map(String).slice(0, 20)
         : [],
       styleNotes: Array.isArray(parsed.styleNotes) ? parsed.styleNotes.map(String).slice(0, 8) : [],
+      keyCharacters: Array.isArray(parsed.keyCharacters) ? parsed.keyCharacters.map(String).slice(0, 20) : [],
+      keyLocations: Array.isArray(parsed.keyLocations) ? parsed.keyLocations.map(String).slice(0, 20) : [],
+      glossary: Array.isArray(parsed.glossary) ? parsed.glossary.map(String).slice(0, 30) : [],
+      timelineHighlights: Array.isArray(parsed.timelineHighlights)
+        ? parsed.timelineHighlights.map(String).slice(0, 20)
+        : [],
       updatedAt: new Date().toISOString(),
     });
     onProgress?.("Specialist profile ready");
@@ -126,6 +136,10 @@ async function buildSpecialistProfile(
       keyTopics: [],
       notableEntities: [],
       styleNotes: [],
+      keyCharacters: [],
+      keyLocations: [],
+      glossary: [],
+      timelineHighlights: [],
       updatedAt: new Date().toISOString(),
     });
     onProgress?.("Specialist profile created (fallback)");
@@ -166,15 +180,39 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+/** Scale timeouts for large EPUBs (full novels often exceed 30s just to open). */
+function getEpubTimeouts(fileSizeBytes: number) {
+  const mb = fileSizeBytes / (1024 * 1024);
+  const openMs = Math.min(300_000, Math.round(120_000 + mb * 30_000));
+  const chapterMs = Math.min(120_000, Math.round(30_000 + mb * 8_000));
+  const fullMs = Math.min(280_000, Math.round(240_000 + mb * 45_000));
+  return { openMs, chapterMs, fullMs };
+}
+
+interface EpubFlowItem {
+  id?: string;
+}
+
+interface EpubBook {
+  flow: EpubFlowItem[];
+  metadata?: { cover?: string; creator?: string };
+  getChapterAsync(id: string): Promise<string>;
+  getImageAsync(id: string): Promise<[Buffer, string]>;
+}
+
 async function extractEpubInner(
   filePath: string,
+  timeouts: ReturnType<typeof getEpubTimeouts>,
   onProgress?: (msg: string) => void
 ): Promise<EpubResult> {
-  const epub = await withTimeout(
-    EPub.createAsync(filePath),
-    30000,
-    "EPUB parsing"
+  onProgress?.(
+    `Opening EPUB structure (up to ${Math.ceil(timeouts.openMs / 60_000)} min for large files)...`
   );
+  const epub = (await withTimeout(
+    EPub.createAsync(filePath),
+    timeouts.openMs,
+    "EPUB parsing"
+  )) as EpubBook;
 
   const chapters: string[] = [];
   const pages: BookPage[] = [];
@@ -188,7 +226,7 @@ async function extractEpubInner(
       try {
         const text = await withTimeout(
           epub.getChapterAsync(item.id),
-          10000,
+          timeouts.chapterMs,
           `chapter ${processed}/${totalItems}`
         );
         const plainText = text
@@ -245,10 +283,12 @@ async function extractEpub(
   };
   process.on("uncaughtException", trapUncaught);
 
+  const timeouts = getEpubTimeouts(buffer.byteLength);
+
   try {
     return await withTimeout(
-      extractEpubInner(filePath, onProgress),
-      120000,
+      extractEpubInner(filePath, timeouts, onProgress),
+      timeouts.fullMs,
       "full EPUB extraction"
     );
   } finally {
@@ -306,9 +346,12 @@ export async function POST(request: NextRequest) {
         const ext = file.name.split(".").pop()?.toLowerCase();
         const title = titleFromFilename(file.name);
 
-        const existing = findBookByFilename(file.name);
+        const existing = findLikelyDuplicate({ filename: file.name, title, author: undefined });
         if (existing) {
-          send("ERROR", `"${existing.title}" is already in your library.`);
+          send(
+            "ERROR",
+            `DUPLICATE:You have this book already ("${existing.title}").`
+          );
           controller.close();
           return;
         }
@@ -377,19 +420,57 @@ export async function POST(request: NextRequest) {
         );
         send("PROGRESS", "This may take a minute for large books — the AI is reading your book");
 
-        let seriesId: string | undefined;
-        const detectedSeriesName = detectSeriesName(file.name);
-        if (detectedSeriesName) {
-          const existingSeries = listSeries().find(
-            (s) => s.name.toLowerCase() === detectedSeriesName.toLowerCase()
+        const dedupeAfterExtract = findLikelyDuplicate({ filename: file.name, title, author });
+        if (dedupeAfterExtract) {
+          send(
+            "ERROR",
+            `DUPLICATE:You have this book already ("${dedupeAfterExtract.title}").`
           );
+          controller.close();
+          return;
+        }
+
+        let seriesId: string | undefined;
+        send("PROGRESS", "Checking series metadata (Open Library + title patterns)...");
+        const seriesHint = await resolveSeriesName({
+          filename: file.name,
+          title,
+          author,
+          allowRemote: true,
+        });
+        const detectedSeriesName =
+          seriesHint?.name || detectSeriesName(file.name, title, author);
+        if (detectedSeriesName) {
+          const cleaned = cleanSeriesDisplayName(detectedSeriesName) || detectedSeriesName;
+          const key = normalizeSeriesKey(cleaned);
+          const existingSeries = listSeries().find((s) => {
+            const sk = normalizeSeriesKey(cleanSeriesDisplayName(s.name) || s.name);
+            return sk === key || (sk.length >= 8 && key.length >= 8 && (sk.includes(key) || key.includes(sk)));
+          });
           if (existingSeries) {
             seriesId = existingSeries.id;
+            saveSeries({
+              id: existingSeries.id,
+              name: cleaned,
+              bookIds: [...new Set([...existingSeries.bookIds])],
+            });
           } else {
-            const created = saveSeries({ name: detectedSeriesName, bookIds: [] });
+            const created = saveSeries({ name: cleaned, bookIds: [] });
             seriesId = created.id;
           }
-          send("PROGRESS", `Detected series: ${detectedSeriesName}`);
+          send(
+            "PROGRESS",
+            `Series: ${cleaned}${seriesHint?.source === "openlibrary" ? " (Open Library)" : ""}`
+          );
+        } else {
+          const inferredSeriesId = inferSeriesIdFromAuthor(author);
+          if (inferredSeriesId) {
+            seriesId = inferredSeriesId;
+            const inferred = listSeries().find((s) => s.id === inferredSeriesId);
+            if (inferred) {
+              send("PROGRESS", `Inferred series by author: ${inferred.name}`);
+            }
+          }
         }
 
         const book = await addBook(title, file.name, text, wordCount, {

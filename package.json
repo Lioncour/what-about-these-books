@@ -4,14 +4,19 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "electron .",
+    "dev:web": "next dev",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "start": "npm run build && cross-env NODE_ENV=production electron .",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "eval:harness": "node scripts/run-eval.mjs",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "npm run build && electron-builder",
-    "electron:start": "electron ."
+    "electron:dev": "electron .",
+    "dist": "npm run build && electron-builder --win",
+    "dist:setup": "node scripts/setup-user-config.mjs && powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
+    "postdist": "node scripts/setup-user-config.mjs",
+    "electron:build": "npm run dist",
+    "electron:start": "cross-env NODE_ENV=production electron ."
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1038.0",
@@ -20,6 +25,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "unpdf": "^1.4.0",
     "vectra": "^0.12.3"
   },
@@ -29,6 +35,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "electron": "^40.6.0",
     "electron-builder": "^26.8.1",
     "eslint": "^9",
@@ -45,14 +52,37 @@
     },
     "files": [
       "electron/**/*",
-      ".next/**/*",
-      "public/**/*",
-      "node_modules/**/*",
-      "package.json"
+      "package.json",
+      ".env.example"
     ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "standalone",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "What About This Book"
     },
     "linux": {
       "icon": "build/icon.png"

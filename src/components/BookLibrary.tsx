@@ -512,10 +512,10 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
           return (
             <div key={s.id} className="mb-4">
               <div
-                className={`mb-2 flex cursor-pointer items-center justify-between rounded-lg border px-2 py-1.5 ${
+                className={`mb-2 flex cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 ${
                   seriesActive
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-background text-foreground"
+                    ? "bg-primary/10 text-primary"
+                    : "text-foreground hover:bg-surface-hover/70"
                 }`}
                 onClick={() => onSelectBook({ id: `series:${s.id}`, title: s.name, wordCount: 0 })}
               >
