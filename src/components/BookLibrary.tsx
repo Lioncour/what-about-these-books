@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
+import TidyTitles from "@/components/library/TidyTitles";
 
 interface Book {
   id: string;
@@ -33,8 +34,8 @@ interface BookLibraryProps {
   onSelectBook: (book: { id: string; title: string; wordCount: number }) => void;
   activeBookId?: string | null;
   readOnly?: boolean;
-  /** "shelf" = roomy main-stage grid; "rail" = compact */
-  variant?: "shelf" | "rail";
+  /** Books or titles changed in here (tidy), so the page can refresh what it shows about them. */
+  onLibraryChanged?: () => void;
 }
 
 export interface BookLibraryHandle {
@@ -91,8 +92,7 @@ function CoverImage({ bookId, title }: { bookId: string; title: string }) {
 }
 
 const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
-  function BookLibrary({ onSelectBook, activeBookId, readOnly, variant = "rail" }, ref) {
-    const shelf = variant === "shelf";
+  function BookLibrary({ onSelectBook, activeBookId, readOnly, onLibraryChanged }, ref) {
     const [books, setBooks] = useState<Book[]>([]);
     const [series, setSeries] = useState<Series[]>([]);
     const [loading, setLoading] = useState(true);
@@ -340,9 +340,7 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
     const groupedBookIds = new Set(visibleSeries.flatMap((s) => s.books.map((b) => b.id)));
     const ungroupedBooks = filteredBooks.filter((b) => !groupedBookIds.has(b.id));
 
-    const bookGridClass = shelf
-      ? "grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
-      : "grid grid-cols-2 gap-5 sm:grid-cols-3";
+    const bookGridClass = "grid grid-cols-2 gap-5 sm:grid-cols-3";
 
     const renderBookCard = (book: Book) => {
       const isActive = activeBookId === book.id;
@@ -370,26 +368,26 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
               </svg>
             </div>
           )}
-          <div className={shelf ? "p-3.5" : "p-2.5"}>
+          <div className="p-2.5">
             {book.seriesOrder != null && (
               <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary/80">
-                Book {Number.isInteger(book.seriesOrder) ? book.seriesOrder : book.seriesOrder}
+                Book {book.seriesOrder}
               </p>
             )}
-            <p className={`truncate font-medium ${shelf ? "text-[15px]" : "text-sm"}`}>{book.title}</p>
+            <p className="line-clamp-2 break-words text-sm font-medium leading-snug" title={book.title}>
+              {book.title}
+            </p>
             {book.author && (
               <p className="truncate text-[11px] text-muted">{book.author}</p>
             )}
-            {!shelf && (
-              <p className="flex items-center gap-1.5 truncate text-[11px] text-muted">
-                {formatWordCount(book.wordCount)}
-                {book.fileType && (
-                  <span className="rounded bg-muted/20 px-1 py-0.5 text-[9px] font-bold uppercase leading-none tracking-wider">
-                    {book.fileType}
-                  </span>
-                )}
-              </p>
-            )}
+            <p className="flex items-center gap-1.5 truncate text-[11px] text-muted">
+              {formatWordCount(book.wordCount)}
+              {book.fileType && (
+                <span className="rounded bg-muted/20 px-1 py-0.5 text-[9px] font-bold uppercase leading-none tracking-wider">
+                  {book.fileType}
+                </span>
+              )}
+            </p>
             {manageMode && !readOnly && (
               <select
                 className="mt-1 w-full rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
@@ -424,25 +422,14 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
 
     return (
       <div>
-        <div className={`mb-5 flex items-center justify-between gap-2 px-0.5 ${shelf ? "mb-7" : ""}`}>
+        <div className="mb-5 flex items-center justify-between gap-2 px-0.5">
           <div>
-            <h2
-              className={
-                shelf
-                  ? "font-display text-2xl font-semibold tracking-tight text-foreground"
-                  : "text-[11px] font-medium tracking-wide text-muted"
-              }
-            >
-              {shelf ? "Your shelves" : `Your Library (${books.length})`}
+            <h2 className="text-[11px] font-medium tracking-wide text-muted">
+              Your Library ({books.length})
             </h2>
-            {shelf && (
-              <p className="mt-1 text-sm text-muted">
-                {books.length} book{books.length === 1 ? "" : "s"} · pick one to talk about
-              </p>
-            )}
           </div>
           <div className="flex items-center gap-2">
-            {!shelf && <p className="hidden text-[11px] text-muted sm:block">Click to focus</p>}
+            <p className="hidden text-[11px] text-muted sm:block">Click to focus</p>
             {!readOnly && (
               <button
                 onClick={() => setManageMode((v) => !v)}
@@ -469,6 +456,13 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(
               >
                 Fix series grouping
               </button>
+              <TidyTitles
+                className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground disabled:opacity-60"
+                onTidied={async () => {
+                  await fetchBooks();
+                  onLibraryChanged?.();
+                }}
+              />
               <button
                 onClick={handleScanDuplicates}
                 className="rounded border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"

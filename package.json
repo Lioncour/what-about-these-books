@@ -11,10 +11,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "eval:harness": "node scripts/run-eval.mjs",
-    "electron:dev": "electron .",
     "dist": "npm run build && electron-builder --win",
     "dist:setup": "node scripts/setup-user-config.mjs && powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
-    "electron:build": "npm run dist",
     "electron:start": "cross-env NODE_ENV=production electron .",
     "test": "vitest run"
   },
@@ -34,7 +32,6 @@
     "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^40.6.0",
     "electron-builder": "^26.8.1",
@@ -42,8 +39,7 @@
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.7",
-    "wait-on": "^9.0.4"
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "com.whataboutthisbook.app",
@@ -75,7 +71,7 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "public/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -86,10 +82,10 @@
       "shortcutName": "What About This Book"
     },
     "linux": {
-      "icon": "build/icon.png"
+      "icon": "public/icon.png"
     },
     "mac": {
-      "icon": "build/icon.png"
+      "icon": "public/icon.png"
     }
   }
 }

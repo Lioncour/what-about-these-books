@@ -1,7 +1,8 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { EmbeddingsModel, EmbeddingsResponse } from "vectra";
-import { sendBedrockCommand } from "@/lib/bedrock-client";
+import { isAbortError, sendBedrockCommand } from "@/lib/bedrock-client";
 import { recordTokenUsage } from "@/lib/token-usage-store";
+import { currentRequestSignal, recordRequestEmbedCall } from "@/lib/chat/request-context";
 
 const BEDROCK_EMBED_MODEL_ID =
   process.env.BEDROCK_EMBED_MODEL_ID || "amazon.titan-embed-text-v2:0";
@@ -15,14 +16,15 @@ function normalizeVector(vector: number[]): number[] {
   return vector.map((n) => n / norm);
 }
 
-async function embedOne(text: string): Promise<number[] | null> {
+async function embedOne(text: string, signal?: AbortSignal): Promise<number[] | null> {
   const command = new InvokeModelCommand({
     modelId: BEDROCK_EMBED_MODEL_ID,
     contentType: "application/json",
     accept: "application/json",
     body: JSON.stringify({ inputText: text }),
   });
-  const response = await sendBedrockCommand(command);
+  const response = await sendBedrockCommand(command, signal);
+  recordRequestEmbedCall();
   const raw = new TextDecoder().decode(response.body);
   const parsed = JSON.parse(raw) as {
     embedding?: number[];
@@ -66,10 +68,12 @@ export class BedrockEmbeddings implements EmbeddingsModel {
 
   async createEmbeddings(inputs: string | string[]): Promise<EmbeddingsResponse> {
     const inputArray = Array.isArray(inputs) ? inputs : [inputs];
+    // Vectra calls this without a signal; a chat request carries its own in the async context.
+    const signal = currentRequestSignal();
 
     try {
       const vectors = await mapWithConcurrency(inputArray, EMBED_CONCURRENCY, async (text) =>
-        embedOne(text)
+        embedOne(text, signal)
       );
       if (vectors.some((v) => v === null)) {
         return {
@@ -82,6 +86,14 @@ export class BedrockEmbeddings implements EmbeddingsModel {
         output: vectors as number[][],
       };
     } catch (error) {
+      // A cancelled request must surface as an abort (which the chat handler ends quietly),
+      // not as an embedding error message.
+      if (signal?.aborted || isAbortError(error)) {
+        if (isAbortError(error)) throw error;
+        const abort = new Error("Embedding request aborted");
+        abort.name = "AbortError";
+        throw abort;
+      }
       return {
         status: "error",
         message: error instanceof Error ? error.message : String(error),

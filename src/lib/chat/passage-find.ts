@@ -7,6 +7,7 @@ import {
   searchSeriesKeyword,
   listSeries,
 } from "@/lib/book-store";
+import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import {
   extractPassageSearchTerms,
   normalizeUserQuestion,
@@ -21,7 +22,7 @@ export type SmartPassageHit = {
   reason: string;
 };
 
-export type PassageFindIntent = {
+type PassageFindIntent = {
   kind: "recipe" | "quote" | "scene" | "general";
   subjectTerms: string[];
 };
@@ -44,7 +45,7 @@ function diversifySubject(terms: string[]): string[] {
   return [...out].filter((t) => t.length >= 3);
 }
 
-export function classifyPassageFindIntent(question: string): PassageFindIntent {
+function classifyPassageFindIntent(question: string): PassageFindIntent {
   const text = normalizeUserQuestion(question).toLowerCase();
   const subjectTerms = diversifySubject(extractPassageSearchTerms(question));
   const wantsRecipe =
@@ -271,20 +272,8 @@ export function findSmartPassages(opts: {
   return out;
 }
 
-export function cleanBookDisplayTitle(title: string): string {
-  let t = title.replace(/\s+/g, " ").trim();
-  t = t.replace(/\s*\((?:EPUB|PDF|TXT)\)\s*/gi, " ");
-  t = t.replace(/\s*\(Expeditionary Force[^)]*\)/gi, " ");
-  t = t.replace(/\s+Expeditionary Force(?:\s+Bo\w*)?.*$/i, " ");
-  t = t.replace(/\s+by\s+Craig\s+Alanson\s*$/i, "");
-  t = t.replace(/\bCraig\s+Alanson\b/gi, " ");
-  t = t.replace(/\s*[-–—]\s*$/g, "");
-  t = t.replace(/\s+/g, " ").trim();
-  return t || title;
-}
-
 /** Pull a named recipe + ingredient list from narrated text when possible. */
-export function extractRecipeCard(snippet: string): {
+function extractRecipeCard(snippet: string): {
   name: string | null;
   ingredients: string[];
 } | null {
@@ -414,12 +403,4 @@ export function formatPassageFindAnswer(opts: {
     "",
     `From **${where}**. Open **Sources** below to read the passage.`,
   ].join("\n");
-}
-
-/** @deprecated Use formatPassageFindAnswer */
-export function formatPassageFindFacts(opts: {
-  question: string;
-  hits: SmartPassageHit[];
-}): string {
-  return formatPassageFindAnswer(opts);
 }

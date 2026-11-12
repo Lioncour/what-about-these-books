@@ -10,6 +10,7 @@ import {
 } from "@/lib/bedrock-client";
 import { logChatEvent } from "@/lib/chat-debug";
 import { recordTokenUsage } from "@/lib/token-usage-store";
+import { recordRequestClaudeCall } from "@/lib/chat/request-context";
 
 type AnthropicUsage = {
   input_tokens?: number;
@@ -75,6 +76,7 @@ export async function callClaudeText(
   const text = parsed.content?.find((c) => c.type === "text")?.text || "";
   const inputTokens = parsed.usage?.input_tokens || 0;
   const outputTokens = parsed.usage?.output_tokens || 0;
+  recordRequestClaudeCall(inputTokens, outputTokens);
   recordTokenUsage({
     kind: "claude",
     modelId: resolvedModel,
@@ -158,6 +160,7 @@ export async function callClaudeStream(
     () => !emitted
   );
 
+  recordRequestClaudeCall(inputTokens, outputTokens);
   recordTokenUsage({
     kind: "claude",
     modelId: resolvedModel,

@@ -27,7 +27,7 @@ const MENTION_VERB = `(?:get\\s+|getting\\s+)?(?:mentioned|mentions?|${APPEAR_TA
 const MENTION_HINT_RE = new RegExp(`ment+i+one?d|${APPEAR_TAIL}|occurs?|\\bused\\b|show up|named`, "i");
 
 /** First quoted string only (a negated class can't span `"A" and "B"`). */
-export function extractQuotedText(input: string): string | null {
+function extractQuotedText(input: string): string | null {
   const match = input.match(/["“”]([^"“”\n]{20,})["“”]/);
   return match?.[1]?.trim() || null;
 }
@@ -86,13 +86,13 @@ export function looksLikeQuoteLookup(input: string): boolean {
   );
 }
 
-export function isPronounTarget(value: string): boolean {
+function isPronounTarget(value: string): boolean {
   return /^(he|she|they|him|her|them|it|this character|that character|this person|that person)$/i.test(
     value.trim()
   );
 }
 
-export function normalizeEntityTarget(raw: string): string {
+function normalizeEntityTarget(raw: string): string {
   return raw
     .trim()
     .replace(/^(and|about|for|of|is|was|are|were|does|do|did|a|an|word|name)\s+/i, "")
@@ -107,7 +107,7 @@ export function normalizeEntityTarget(raw: string): string {
     .trim();
 }
 
-export function extractMentionCountTarget(input: string): string | null {
+function extractMentionCountTarget(input: string): string | null {
   const text = normalizeUserQuestion(input);
   const patterns = [
     new RegExp(
@@ -203,10 +203,7 @@ export function extractBookCountScope(input: string): BookCountScope {
   return { kind: "all" };
 }
 
-/** Best-effort series order — delegates to series-order (known maps + Book N). */
-export { extractSeriesBookNumber } from "@/lib/series-order";
-
-export function extractCountFollowupCandidate(input: string): string | null {
+function extractCountFollowupCandidate(input: string): string | null {
   if (!isShortCountFollowup(input)) return null;
   const cleaned = normalizeEntityTarget(
     normalizeUserQuestion(input)
@@ -223,7 +220,7 @@ export function extractCountFollowupCandidate(input: string): string | null {
 }
 
 /** Short name-only follow-ups like "and Skippy?" after a count question — not full sentences. */
-export function isShortCountFollowup(input: string): boolean {
+function isShortCountFollowup(input: string): boolean {
   const text = normalizeUserQuestion(input).trim();
   if (!text || looksLikeMentionCountQuestion(text)) return false;
   if (/\b(find|recipe|receipt|reciept|where|locate|search|show me|can you|please|there is|is there)\b/i.test(text)) {
@@ -240,7 +237,7 @@ export function isShortCountFollowup(input: string): boolean {
   return /^[A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*){0,2}$/.test(stripped);
 }
 
-export function isCountFollowupContext(messages: ChatMessage[]): boolean {
+function isCountFollowupContext(messages: ChatMessage[]): boolean {
   const recentUsers = messages
     .filter((m) => m.role === "user")
     .slice(-4)
@@ -405,7 +402,7 @@ export function extractPassageSearchTerms(input: string): string[] {
   return [...terms].slice(0, 12);
 }
 
-export function extractPotentialEntityFromText(text: string): string | null {
+function extractPotentialEntityFromText(text: string): string | null {
   const whoIs = text.match(/\bwho is\s+["“”']?([^"“”'?\n]+?)["“”']?(?:\?|$)/i)?.[1];
   if (whoIs && !isPronounTarget(whoIs)) return whoIs.trim();
 
@@ -421,7 +418,7 @@ export function extractPotentialEntityFromText(text: string): string | null {
   return null;
 }
 
-export function resolveMentionTarget(rawTarget: string | null, messages: ChatMessage[]): string | null {
+function resolveMentionTarget(rawTarget: string | null, messages: ChatMessage[]): string | null {
   if (!rawTarget) return null;
   if (!isPronounTarget(rawTarget)) return rawTarget;
 

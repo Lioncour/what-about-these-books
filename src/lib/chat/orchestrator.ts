@@ -15,7 +15,7 @@ export function looksLikeThinAnswer(text: string): boolean {
   return false;
 }
 
-export function buildFallbackFromSpecialists(question: string, specialists: SpecialistAnswer[]): string {
+function buildFallbackFromSpecialists(question: string, specialists: SpecialistAnswer[]): string {
   const numeric = specialists
     .map((s) => s.numericEstimate)
     .filter((n): n is number => typeof n === "number");

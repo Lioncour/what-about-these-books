@@ -3,9 +3,12 @@ import {
   MAX_SERIES_SPECIALIST_BOOKS,
   MAX_SPECIALIST_SEED_PASSAGES,
 } from "@/lib/chat/constants";
-import { listBooks, listSeries, queryAllBooks } from "@/lib/book-store";
-import { cleanBookDisplayTitle } from "@/lib/chat/passage-find";
+import { listBooks, listSeries, queryAllBooks, querySeriesBooks } from "@/lib/book-store";
+import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import { extractSeriesBookNumber } from "@/lib/series-order";
+
+/** Seed passages fetched once for a series' specialists. */
+const SERIES_SEED_PASSAGES = 48;
 
 export interface BookRef {
   id: string;
@@ -161,22 +164,35 @@ export async function selectLibrarySpecialists(
   return { books: chosen, namedBooks, seedPassages };
 }
 
-/** @deprecated Prefer selectLibrarySpecialists — kept for older call sites. */
-export async function selectBooksForLibrarySpecialists(
+/**
+ * Specialists for a series in focus: its books in catalog order (capped). A book the
+ * question names is read first — or alone when it is the only one named and the question
+ * doesn't ask for several books, the same rule as the library scope.
+ */
+export async function selectSeriesSpecialists(
+  series: { id: string; bookIds: string[] },
   question: string,
-  maxBooks = MAX_LIBRARY_SPECIALIST_BOOKS
-): Promise<BookRef[]> {
-  return (await selectLibrarySpecialists(question, maxBooks)).books;
-}
-
-export function selectBooksForSeriesSpecialists(
-  seriesBookIds: string[],
   maxBooks = MAX_SERIES_SPECIALIST_BOOKS
-): BookRef[] {
-  return listBooks()
-    .filter((b) => seriesBookIds.includes(b.id))
+): Promise<LibrarySpecialistSelection> {
+  const catalogBooks = listBooks();
+  let books: BookRef[] = catalogBooks
+    .filter((b) => series.bookIds.includes(b.id))
     .slice(0, maxBooks)
     .map((b) => ({ id: b.id, title: b.title }));
+  const namedBooks = findNamedBooksInQuestion(question, catalogBooks).filter((b) =>
+    series.bookIds.includes(b.id)
+  );
+  if (namedBooks.length === 1 && !wantsMultipleBooks(question)) {
+    return { books: namedBooks, namedBooks, seedPassages: [] };
+  }
+  if (namedBooks.length) {
+    const rest = books.filter((b) => !namedBooks.some((n) => n.id === b.id));
+    books = [...namedBooks, ...rest].slice(0, Math.max(books.length, namedBooks.length));
+  }
+  if (!books.length) return { books, namedBooks, seedPassages: [] };
+  // One semantic query for the series; specialists reuse their book's passages.
+  const seedPassages = await querySeriesBooks(series.id, question, SERIES_SEED_PASSAGES);
+  return { books, namedBooks, seedPassages };
 }
 
 /** Split one seed query's passages per book title for the specialists. */

@@ -1,5 +1,5 @@
 import { loadBookPages, listBooks, listSeries, getBookById } from "@/lib/book-store";
-import { cleanBookDisplayTitle } from "@/lib/chat/passage-find";
+import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import { normalizeUserQuestion } from "@/lib/chat/intent";
 import type { ChatSource } from "@/lib/chat/types";
 

@@ -68,7 +68,6 @@ On first launch, edit `%USERPROFILE%\.whataboutthisbook\.env` (created automatic
 | `npm run start` | Desktop app (production build) |
 | `npm run dist` | Build Windows `.exe` installer |
 | `npm run dist:setup` | User `.env` + Desktop shortcut (unpacked build) |
-| `npm run electron:build` | Alias for `dist` |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run eval:harness` | Retrieval quality eval (`eval/gold-questions.json`) |

@@ -1,5 +1,5 @@
 import { listBooks, loadBookPages, getBookById, type BookPage } from "@/lib/book-store";
-import { cleanBookDisplayTitle } from "@/lib/chat/passage-find";
+import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 
 export type PassageLookup = {
   bookId: string;

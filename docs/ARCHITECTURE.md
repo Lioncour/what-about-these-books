@@ -87,7 +87,7 @@ Default root: **`~/.whataboutthisbook/`** (override with `DATA_DIR`).
 | `backups/` | Snapshots |
 | `logs/chat.log` | Debug trail (what the pipeline did) |
 
-All JSON stores are written atomically (`writeJsonAtomic` in `runtime-config.ts`: temp file + rename), `books.json` keeps a `.bak`, and index updates are serialised (`withIndexLock` in `book-store.ts`).
+All JSON stores are written atomically (`writeJsonAtomic` in `runtime-config.ts`: temp file + rename), `books.json` keeps a `.bak`, and index updates are serialised (`withIndexLock` in `store/vector-index.ts`). `src/lib/book-store.ts` is only a barrel; the code lives in `src/lib/store/*` (catalog, pages, search, series, vector-index, chats, labels, tidy…).
 
 ### Dual retrieval (important!)
 
@@ -107,12 +107,15 @@ When you hit Send, the UI opens `POST /api/chat` and reads a **line protocol**:
 ```
 STATUS:"Flipping through…"
 TEXT:"Here's what I found…\n\n## Evidence\n…"
+TOKEN:"Here's "
 SOURCES:[{…}]
-SPECIALISTS:[{…}]
-WHY:{…}
+SCOPE:{"books":[{"id":"book-…","title":"Columbus Day"}],"reason":"named"}
+USAGE:{"claudeCalls":2,"inputTokens":10500,"outputTokens":1200,"embedCalls":1,"ms":12000}
 ```
 
-**Caveat friends always ask about:** Claude itself is **not** token-streamed yet. Bedrock `InvokeModel` returns a full answer. The “stream” is progress updates (`STATUS`) plus a safely encoded final answer (`TEXT`), so long Markdown with newlines doesn’t break the protocol.
+`SCOPE` says which books the answer is drawn from and why (`named`, `focus`, `series`, `semantic`, `all`); it goes out before the first Bedrock call so the reader sees early that the right book is being read. `USAGE` is the last line of every completed stream: this request's calls and tokens, collected through an `AsyncLocalStorage` request context (`chat/request-context.ts`) that also carries the abort signal down to Titan embeddings. The UI shows both under each answer.
+
+Final answers are token-streamed (`TOKEN`) from Bedrock; deterministic answers (counts, quotes) arrive as one `TEXT`.
 
 Encoding lives in `src/lib/chat/stream-protocol.ts`.
 
@@ -139,7 +142,7 @@ Question
         pull passages → one Claude call with citations + friend voice
 ```
 
-Main file: `src/lib/chat/handler.ts`  
+`src/lib/chat/handler.ts` is a thin composition: it validates, builds a `Scope` (`scope.ts`: one object for library / series / single book with `semantic`, `keyword`, `exactQuote`, `countMentions`, `selectSpecialistBooks`) and runs the `PIPELINE` array of steps in `src/lib/chat/steps/*` (library-command, mention-count, passage-find, theme-survey, knowledge, catalog-facts, who-is, small-talk, main-characters, specialists, quote-lookup, rag). Each step either answers and ends the stream or passes. `tests/chat-handler.test.ts` drives the real handler with mocked stores and Bedrock and pins every route in every scope.
 Route is a thin re-export: `src/app/api/chat/route.ts`.
 
 ### Why specialists + orchestrator?
@@ -193,11 +196,16 @@ Re-index without re-upload: `reindex-manager.ts` + `/api/reindex`.
 
 | Piece | Role |
 |-------|------|
-| `page.tsx` | Shell: library sidebar + chat, settings, history |
+| `page.tsx` | Thin shell composing the hooks and components below |
+| `hooks/useChatStream.ts` | Send, abort, decode the line protocol |
+| `hooks/useChatHistory.ts`, `useLibrary.ts`, `useLibraryRail.ts` | Saved chats, books/series/focus, rail width |
+| `chat/MessageList.tsx`, `Composer.tsx`, `WelcomePanel.tsx`, `ChatHeader.tsx` | The conversation column |
+| `library/TidyTitles.tsx` | Manage → “Tidy titles & chapters” (dry run, confirm, backup, apply) |
+| `settings/*Section.tsx` | Settings page sections |
 | `BookLibrary.tsx` | Covers, series, manage/duplicates |
 | `UploadArea.tsx` | Drag/drop queue + “Ask about this book” |
 | `ChatMarkdown.tsx` | Assistant Markdown |
-| `chat/MessageExtras.tsx` | Sources / specialist reports / why |
+| `chat/MessageExtras.tsx` | Sources, scope line, usage line |
 | `chat/AskDialog.tsx` | In-app prompts (no ugly `window.prompt`) |
 | `AwsStatusBadge.tsx` | Bedrock login health |
 
@@ -228,13 +236,19 @@ Re-index without re-upload: `reindex-manager.ts` + `/api/reindex`.
 
 ```
 electron/main.js          # window + spawn Next + env
-src/app/page.tsx          # main UI
-src/app/api/*/route.ts    # HTTP surface
-src/lib/book-store.ts     # catalog + Vectra + pages + chats
-src/lib/bedrock-*.ts      # AWS clients
-src/lib/chat/handler.ts   # chat brain
-src/lib/chat/*.ts         # intent, specialists, stream, voice
+src/app/page.tsx          # thin UI shell
+src/hooks/*               # chat stream, history, library
 src/components/*          # React pieces
+src/app/api/*/route.ts    # HTTP surface
+src/proxy.ts              # same-origin guard for /api/*
+src/lib/store/*           # catalog, pages, search, series, Vectra, chats, labels, tidy
+src/lib/book-store.ts     # barrel over store/*
+src/lib/bedrock-*.ts      # AWS clients
+src/lib/chat/handler.ts   # pipeline composition
+src/lib/chat/scope.ts     # library / series / book scope
+src/lib/chat/steps/*      # one file per answer route
+src/lib/chat/*.ts         # intent, specialists, stream, voice
+tests/*                   # vitest: handler routes, stores, titles, labels, UI formatters
 scripts/*                 # packaging, eval, shortcuts
 eval/gold-questions.json  # retrieval eval fixtures
 ```
@@ -243,7 +257,7 @@ eval/gold-questions.json  # retrieval eval fixtures
 
 ## Extension points (if a friend wants to hack)
 
-1. **New chat shortcut** — detector in `intent.ts` + branch in `handler.ts`  
+1. **New chat shortcut** — detector in `intent.ts` + a step in `chat/steps/` added to `PIPELINE` in `handler.ts` + a case in `tests/chat-handler.test.ts`  
 2. **New library command** — `library-commands.ts`  
 3. **Voice / formatting** — `response-formatting.ts`  
 4. **Models** — settings UI → `modelRouting` → Bedrock IDs  

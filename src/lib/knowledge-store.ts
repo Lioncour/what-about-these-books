@@ -250,3 +250,18 @@ export function detectChronologyConflicts(bookIds?: string[]): string[] {
   }
   return conflicts.slice(0, 20);
 }
+
+/** Timeline events carry a copy of the book's title for display; follow a rename. */
+export function renameBookInKnowledge(bookId: string, bookTitle: string): void {
+  const timeline = loadTimeline();
+  let changed = false;
+  for (const event of timeline.events) {
+    if (event.bookId === bookId && event.bookTitle !== bookTitle) {
+      event.bookTitle = bookTitle;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  timeline.updatedAt = new Date().toISOString();
+  saveTimeline(timeline);
+}

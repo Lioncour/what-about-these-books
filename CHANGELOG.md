@@ -13,6 +13,33 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Changed — 2026-11-12 restructuring and cleanup
+
+- **Chat handler rebuilt** around a `Scope` and a step pipeline: `handler.ts` 1682 → 164 lines,
+  one file per answer route in `src/lib/chat/steps/`. Characterization tests were written
+  against the old handler first; three behaviours were unified on purpose (a book named inside
+  a focused series is read alone; count follow-ups honour a named book; an exact-quote hit
+  costs no embedding).
+- **Every answer shows where it came from and what it cost**: `SCOPE` and `USAGE` stream lines,
+  rendered as "Read from Columbus Day · named in your question" and
+  "2 calls · 10.5k tokens in · 1.2k out · 12 s" (or "No AI calls · exact text search").
+- **Stop reaches the embeddings too** (abort signal carried in a request context).
+- **`book-store.ts` split** into `src/lib/store/*` behind the same barrel; results carry `bookId`
+  so a renamed title can't break lookups; phrase counts match across line breaks.
+- **Chapter labels come from the chapter's own heading** ("Chapter 10 · Skippy") instead of
+  the position in the EPUB flow, which counted front matter.
+- **Tidy titles & chapters** (Manage): dry run, confirmation, backup, then clean titles and
+  relabel chapters for books already in the library. Title cleaning handles truncated
+  filenames ("Failure Mode (Expeditionary For Craig Alanson" → "Failure Mode") and no longer
+  has series-specific regexes.
+- **UI split**: `page.tsx` 1196 → 219 lines and the settings page 611 → 92, into hooks and
+  components; autosave once per answer instead of per token; dead specialist/why panels removed.
+- **Repo cleanup**: removed the one-off `scripts/split-chat.mjs`, the stale Ollama-era
+  `deploy.sh`, duplicate npm scripts, unused `concurrently`/`wait-on`; the installer icon now
+  comes from the tracked `public/icon.png` (the old `build/` copy was git-ignored).
+- **Tests**: 172 (handler routes in every scope, stores against a temp data dir, heading
+  parser, title cleaning, UI formatters).
+
 ### Fixed — 2026-11-12 review pass
 
 Full list with file references in `docs/REVIEW-2026-11-12.md`.

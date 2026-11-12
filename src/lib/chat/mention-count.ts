@@ -8,7 +8,7 @@ import {
   type SeriesEntry,
 } from "@/lib/book-store";
 import { extractBookCountScope, type BookCountScope } from "@/lib/chat/intent";
-import { cleanBookDisplayTitle } from "@/lib/chat/passage-find";
+import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import {
   compareSeriesBooks,
   formatSeriesOrderLabel,
@@ -84,7 +84,7 @@ export function listOrderedSeriesBooks(seriesId: string) {
     );
 }
 
-export function applyBookCountScope<T extends { order: number | null }>(
+function applyBookCountScope<T extends { order: number | null }>(
   ordered: T[],
   scope: BookCountScope
 ): T[] {

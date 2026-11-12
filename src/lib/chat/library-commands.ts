@@ -27,7 +27,7 @@ export interface LibraryCommandResult {
 }
 
 /** Strip @command@ wrappers or leading @ */
-export function normalizeLibraryCommandInput(raw: string): { text: string; explicit: boolean } {
+function normalizeLibraryCommandInput(raw: string): { text: string; explicit: boolean } {
   const trimmed = raw.trim();
   const wrapped = trimmed.match(/^@([\s\S]+)@$/);
   if (wrapped) return { text: wrapped[1].trim(), explicit: true };
@@ -87,7 +87,7 @@ export function resolveLibraryCommand(...rawInputs: Array<string | undefined>): 
   return null;
 }
 
-export function parseLibraryCommand(raw: string): LibraryCommand | null {
+function parseLibraryCommand(raw: string): LibraryCommand | null {
   const { text, explicit } = normalizeLibraryCommandInput(raw);
   const lower = text.toLowerCase();
 

@@ -10,9 +10,36 @@ export function titleFromFilename(filename: string): string {
 }
 
 /**
- * Title shown in the library, built at ingest. Prefers the book's own metadata
- * title; otherwise cleans the filename: format tags, the author's name in any
- * order, "(Series Book N)" / "Series Book N" tails, and lower-case-only names.
+ * Cut a truncated copy of `full` off the end of `t`: filenames are shortened by download
+ * sites, so "Failure Mode (Expeditionary For" ends in a prefix of "Expeditionary Force".
+ * The fragment must start at a word boundary and reach past the first word of `full`
+ * (or follow an opening bracket), so "Children of Dune" keeps its "Dune" in a series
+ * called "Dune Chronicles". An opening bracket before the fragment goes with it.
+ */
+function stripTruncatedTail(t: string, full: string): string {
+  const name = full.replace(/\s+/g, " ").trim();
+  const lowerName = name.toLowerCase();
+  const lower = t.toLowerCase();
+  const firstWord = lowerName.split(" ")[0].length;
+  for (let len = name.length; len >= 3; len--) {
+    const fragment = lowerName.slice(0, len);
+    if (fragment.endsWith(" ") || !lower.endsWith(fragment)) continue;
+    const at = t.length - len;
+    const before = t.slice(0, at);
+    const bracketed = /[(\[]\s*$/.test(before);
+    if (at > 0 && !/[\s(\[]$/.test(before)) continue;
+    if (!bracketed && len <= firstWord + 1) continue;
+    return before.replace(/[(\[]\s*$/, "").trimEnd();
+  }
+  return t;
+}
+
+/**
+ * Title shown in the library, built at ingest and by the library tidy. Prefers the
+ * book's own metadata title; otherwise cleans the filename: format tags, "by" and the
+ * author's name in any order, "(Series Book N)" / "Series #N" / "Series Book N" tails,
+ * a leading series number ("9 Valkyrie"), tails cut off mid-word ("(Expeditionary For",
+ * "Expeditionary Force Bo"), brackets left open, and lower-case-only names.
  */
 export function cleanIngestTitle(opts: {
   filename: string;
@@ -23,33 +50,61 @@ export function cleanIngestTitle(opts: {
   const meta = (opts.metadataTitle || "").replace(/\s+/g, " ").trim();
   if (meta && meta.length >= 2 && !/\.(epub|pdf|txt)$/i.test(meta)) return meta;
 
-  let t = titleFromFilename(opts.filename).replace(/\s+/g, " ").trim();
-  t = t.replace(/[\[(]\s*(?:epub|pdf|txt|mobi|azw3?|kindle|retail|ebook)\s*[\])]/gi, " ");
-  if (opts.seriesName) {
-    const words = opts.seriesName.split(/\s+/).filter(Boolean).map(escapeRe);
-    if (words.length) {
-      // "(Expeditionary Force Book 6)", "Expeditionary Force Book 6", "Expeditionary Force 6"
-      t = t.replace(
-        new RegExp(
-          `[\\[(]?\\s*${words.join("\\s+")}(?:\\s*(?:,|-|:)?\\s*(?:book|bk|vol(?:ume)?|#)?\\s*\\d+(?:\\.\\d+)?)?\\s*[\\])]?`,
-          "gi"
-        ),
-        " "
-      );
-    }
-  }
-  if (opts.author) {
-    const names = opts.author.split(/[\s,]+/).filter((w) => w.length > 1).map(escapeRe);
+  const squeeze = (s: string) => s.replace(/\s+/g, " ").trim();
+  let t = squeeze(titleFromFilename(opts.filename));
+  t = squeeze(t.replace(/[\[(]\s*(?:epub|pdf|txt|mobi|azw3?|kindle|retail|ebook)\s*[\])]/gi, " "));
+
+  // Author first: it usually comes last, and what it leaves at the end is the series tail.
+  const author = squeeze((opts.author || "").replace(/,/g, " "));
+  if (author) {
+    const names = author.split(" ").filter((w) => w.length > 1);
     if (names.length) {
-      // the author's names in any order, as a run ("Craig Alanson", "alanson craig", "Alanson, Craig")
-      t = t.replace(
-        new RegExp(`(?:\\b(?:${names.join("|")})\\b[\\s,]*){${Math.min(names.length, 2)},}`, "gi"),
-        " "
+      // "by" + the author's names in any order, as a run ("Craig Alanson", "alanson craig", "Alanson, Craig")
+      t = squeeze(
+        t.replace(
+          new RegExp(
+            `(?:\\bby\\s+)?(?:\\b(?:${names.map(escapeRe).join("|")})\\b[\\s,]*){${Math.min(names.length, 2)},}`,
+            "gi"
+          ),
+          " "
+        )
       );
+      if (names.length >= 2) {
+        // A name cut off at the end: "… Craig Alans", "… Alanson Cr"
+        for (const order of [names.join(" "), [...names].reverse().join(" ")]) {
+          t = stripTruncatedTail(t, order);
+        }
+      }
+      t = squeeze(t.replace(/\bby\s*$/i, " "));
     }
   }
+
+  const series = squeeze(opts.seriesName || "");
+  if (series) {
+    const words = series.split(" ").map(escapeRe).join("\\s+");
+    // "(Expeditionary Force Book 6)", "Expeditionary Force #10", "Expeditionary Force 6",
+    // and a "Book" cut off at the end of the name: "Expeditionary Force Bo"
+    const number = "(?:book|bk|vol(?:ume)?|#)?\\s*#?\\d+(?:\\.\\d+)?";
+    const cutBook = "b(?:o(?:ok?)?)?\\s*#?\\s*[\\])]?\\s*$";
+    const before = t;
+    t = squeeze(
+      t.replace(new RegExp(`[\\[(]?\\s*${words}(?:\\s*(?:,|-|:)?\\s*(?:${number}|${cutBook}))?\\s*[\\])]?`, "gi"), " ")
+    );
+    if (t === before) t = stripTruncatedTail(t, series);
+    // "9 Valkyrie", "03 Paradise": the number in the series, put first by whoever named the file.
+    const numbered = /^#?\d{1,2}(?:\.\d)?\s*[.)]?\s+(?=\p{L})/u.exec(t);
+    if (numbered) t = t.slice(numbered[0].length);
+  }
+
   t = t.replace(/\b(?:book|bk|vol(?:ume)?)\s*\d+(?:\.\d+)?\b/gi, " ");
   t = t.replace(/\(\s*\)|\[\s*\]/g, " ");
+  // A bracket that never closes is a tag the filename lost the end of: "Title (Some Series Bo".
+  for (const [open, close] of [["(", ")"], ["[", "]"]]) {
+    const at = t.lastIndexOf(open);
+    if (at > 0 && !t.includes(close, at) && squeeze(t.slice(0, at))) t = t.slice(0, at);
+  }
+  // …and a closing bracket whose opening went with the series name.
+  if (!/[(\[]/.test(t)) t = t.replace(/[)\]]/g, " ");
   t = t.replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, "").replace(/\s+/g, " ").trim();
   if (t && t === t.toLowerCase()) {
     t = t.replace(/\b([a-z])(\w*)/g, (_m, a: string, rest: string) => a.toUpperCase() + rest);
@@ -192,14 +247,19 @@ export function detectSeriesName(filename: string, title?: string, author?: stri
   return null;
 }
 
-export function seriesNamesMatch(a: string, b: string): boolean {
-  const ka = normalizeSeriesKey(a);
-  const kb = normalizeSeriesKey(b);
+/** Merge key of a stored series name (display clean-up, then `normalizeSeriesKey`). */
+export function seriesKeyOf(name: string): string {
+  return normalizeSeriesKey(cleanSeriesDisplayName(name) || name);
+}
+
+/**
+ * Two series keys name the same series: equal, or one contains the other
+ * ("expeditionary force" vs "expeditionary force saga"; both at least 8 characters).
+ */
+export function seriesKeysMatch(ka: string, kb: string): boolean {
   if (!ka || !kb) return false;
   if (ka === kb) return true;
-  // One contains the other (e.g. "expeditionary force" vs "expeditionary force book")
-  if (ka.length >= 8 && kb.length >= 8 && (ka.includes(kb) || kb.includes(ka))) return true;
-  return false;
+  return ka.length >= 8 && kb.length >= 8 && (ka.includes(kb) || kb.includes(ka));
 }
 
 /** Prefer the cleaner / shorter display name when merging. */
@@ -243,7 +303,7 @@ export function simplifyTitleForLookup(title: string, author?: string): string {
 /**
  * If the title/filename clearly contains a series phrase (even truncated), return it.
  */
-export function detectSeriesNameEmbedded(text: string): string | null {
+function detectSeriesNameEmbedded(text: string): string | null {
   const blob = text.replace(/[_-]+/g, " ");
 
   // Explicit "Expeditionary Force" (allow truncated "Expeditionary For")

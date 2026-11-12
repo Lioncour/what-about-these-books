@@ -118,12 +118,24 @@ export function removeBookFromQuality(bookId: string): void {
   if (cards.some((r) => r.bookId === bookId)) {
     saveScorecards(cards.filter((r) => r.bookId !== bookId));
   }
-  const cache = loadCache();
-  if (cache.some((r) => r.bookId === bookId)) {
-    saveCache(cache.filter((r) => r.bookId !== bookId));
-  }
+  dropSpecialistCacheForBook(bookId);
 }
 
 export function listSpecialistScorecards(): SpecialistScorecard[] {
   return loadScorecards().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** Scorecards are keyed by book id and carry the title for display; follow a rename. */
+export function renameBookInQuality(bookId: string, bookTitle: string): void {
+  const cards = loadScorecards();
+  const card = cards.find((r) => r.bookId === bookId);
+  if (!card || card.bookTitle === bookTitle) return;
+  card.bookTitle = bookTitle;
+  saveScorecards(cards);
+}
+
+/** Drop cached specialist answers for a book whose page labels changed (they cite the old ones). */
+export function dropSpecialistCacheForBook(bookId: string): void {
+  const cache = loadCache();
+  if (cache.some((r) => r.bookId === bookId)) saveCache(cache.filter((r) => r.bookId !== bookId));
 }

@@ -116,7 +116,7 @@ ${context}`;
   return text?.trim() || `I found references to **${params.target}**, but I couldn't generate a reliable identity summary yet.`;
 }
 
-export function parseSpecialistConfidence(value: string | undefined): SpecialistConfidence {
+function parseSpecialistConfidence(value: string | undefined): SpecialistConfidence {
   if (value === "high" || value === "medium" || value === "low") return value;
   return "low";
 }

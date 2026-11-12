@@ -6,7 +6,6 @@ import { callClaudeText, extractJsonObject } from "@/lib/bedrock-claude";
 import {
   detectSeriesName,
   normalizeTextId,
-  normalizeSeriesKey,
   cleanSeriesDisplayName,
   cleanIngestTitle,
   titleFromFilename,
@@ -20,13 +19,17 @@ import {
   loadSettings,
   saveCover,
   findBookByFilename,
+  findSeriesByName,
+  inferSeriesIdFromAuthor,
   listBooks,
   listSeries,
   saveSeries,
   saveBookSpecialistProfile,
 } from "@/lib/book-store";
 import type { BookPage } from "@/lib/book-store";
+import { firstHtmlHeading, relabelEpubPages } from "@/lib/store/labels";
 import { rebuildKnowledgeForBook } from "@/lib/knowledge-store";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 export const maxDuration = 300;
 
@@ -75,25 +78,6 @@ function findLikelyDuplicate(params: { filename: string; title: string; author?:
     if (authorMatch && titleMatch) return { id: book.id, title: book.title };
   }
   return null;
-}
-
-function inferSeriesIdFromAuthor(author?: string): string | undefined {
-  if (!author) return undefined;
-  const authorKey = author.toLowerCase().trim();
-  const books = listBooks();
-  const series = listSeries();
-  const counts = new Map<string, number>();
-  for (const s of series) {
-    let count = 0;
-    for (const bookId of s.bookIds) {
-      const book = books.find((b) => b.id === bookId);
-      if (book?.author?.toLowerCase().trim() === authorKey) count++;
-    }
-    if (count > 0) counts.set(s.id, count);
-  }
-  const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (!best || best[1] < 2) return undefined;
-  return best[0];
 }
 
 async function buildSpecialistProfile(
@@ -241,10 +225,11 @@ async function extractEpubInner(
   )) as EpubBook;
 
   const chapters: string[] = [];
-  const pages: BookPage[] = [];
+  const flowPages: BookPage[] = [];
+  /** Each section's first heading element, for the chapter labels. */
+  const headings: (string | undefined)[] = [];
   const totalItems = epub.flow.length;
   let processed = 0;
-  let chapterNum = 0;
 
   for (const item of epub.flow) {
     processed++;
@@ -260,9 +245,10 @@ async function extractEpubInner(
           .replace(/\s+/g, " ")
           .trim();
         if (plainText) {
-          chapterNum++;
           chapters.push(plainText);
-          pages.push({ label: `Chapter ${chapterNum}`, text: plainText });
+          // Provisional label = position in the flow; replaced below from the headings.
+          flowPages.push({ label: `Chapter ${flowPages.length + 1}`, text: plainText });
+          headings.push(firstHtmlHeading(text));
         }
         if (onProgress && processed % 5 === 0) {
           onProgress(`Read ${processed}/${totalItems} chapters (${chapters.length} with text)...`);
@@ -285,6 +271,11 @@ async function extractEpubInner(
   } catch {
     // No cover available
   }
+
+  // The flow counts cover, title page and contents, so "Chapter 12" was really the
+  // section starting "CHAPTER TEN SKIPPY". Label each section by its own heading;
+  // books without recognisable chapter headings keep the flow numbering.
+  const pages = relabelEpubPages(flowPages, headings);
 
   const author = epub.metadata?.creator || undefined;
   const title = epub.metadata?.title || undefined;
@@ -334,12 +325,8 @@ function extractTxt(buffer: ArrayBuffer): TxtResult {
 }
 
 export async function POST(request: NextRequest) {
-  if (process.env.PUBLIC_MODE === "true") {
-    return Response.json(
-      { error: "Uploads are disabled in public mode." },
-      { status: 403 }
-    );
-  }
+  const blocked = publicModeBlocked("Uploading books");
+  if (blocked) return blocked;
 
   const declaredLength = Number(request.headers.get("content-length") || 0);
   if (declaredLength > MAX_UPLOAD_BYTES) {
@@ -473,11 +460,7 @@ export async function POST(request: NextRequest) {
           seriesHint?.name || detectSeriesName(file.name, title, author);
         if (detectedSeriesName) {
           const cleaned = cleanSeriesDisplayName(detectedSeriesName) || detectedSeriesName;
-          const key = normalizeSeriesKey(cleaned);
-          const existingSeries = listSeries().find((s) => {
-            const sk = normalizeSeriesKey(cleanSeriesDisplayName(s.name) || s.name);
-            return sk === key || (sk.length >= 8 && key.length >= 8 && (sk.includes(key) || key.includes(sk)));
-          });
+          const existingSeries = findSeriesByName(cleaned);
           if (existingSeries) {
             seriesId = existingSeries.id;
             saveSeries({

@@ -60,7 +60,7 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 /**
  * Look up series via Open Library (subjects often include `series:Name`).
  */
-export async function lookupSeriesFromOpenLibrary(
+async function lookupSeriesFromOpenLibrary(
   title: string,
   author?: string
 ): Promise<string | null> {

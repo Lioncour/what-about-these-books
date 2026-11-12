@@ -7,7 +7,7 @@ export const MAX_SERIES_SPECIALIST_BOOKS = 6;
 /** Seed passages when ranking which books to consult. */
 export const MAX_SPECIALIST_SEED_PASSAGES = 40;
 
-export const FAMOUS_LIBRARIANS = [
+const FAMOUS_LIBRARIANS = [
   "Hypatia",
   "Borges",
   "Dewey",
@@ -22,10 +22,6 @@ function hashSeed(seed: string): number {
   let h = 5381;
   for (let i = 0; i < seed.length; i++) h = ((h * 33) ^ seed.charCodeAt(i)) >>> 0;
   return h;
-}
-
-export function getLibrarianName(seed: string, idx = 0): string {
-  return FAMOUS_LIBRARIANS[(hashSeed(seed) + idx) % FAMOUS_LIBRARIANS.length];
 }
 
 /**

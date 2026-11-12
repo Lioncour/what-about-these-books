@@ -45,7 +45,7 @@ export type BookOrderHints = {
 };
 
 /** Pull an explicit Book N / #N from title or filename. */
-export function extractExplicitBookNumber(title: string, filename = ""): number | null {
+function extractExplicitBookNumber(title: string, filename = ""): number | null {
   const blob = `${title} ${filename}`;
 
   const bookN = blob.match(/\b(?:book|volume|vol\.?)\s*#?\s*(\d{1,2})(?:\.(\d+))?\b/i);
@@ -75,7 +75,7 @@ export function extractExplicitBookNumber(title: string, filename = ""): number 
   return null;
 }
 
-export function lookupKnownSeriesOrder(
+function lookupKnownSeriesOrder(
   title: string,
   filename = "",
   seriesName?: string | null
