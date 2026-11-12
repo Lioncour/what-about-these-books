@@ -47,6 +47,81 @@ if (fs.existsSync(runtimeSrc) && fs.existsSync(runtimeDest)) {
   if (added.length) console.log(`Added Next server runtimes the trace missed: ${added.join(", ")}`);
 }
 
+// Packages listed in `serverExternalPackages` (vectra, epub2) are not bundled. The build
+// leaves a link for each in `.next/node_modules/<name>-<hash>` that points into the
+// project's own node_modules (an absolute path on Windows), and traces their
+// dependencies only partly (`uuid` arrives as a bare package.json). That works on the
+// machine that built it and nowhere else. Replace each link with a real copy and bring
+// the package's whole production dependency tree into the standalone node_modules.
+const projectModules = path.join(root, "node_modules");
+const standaloneModules = path.join(standaloneDir, "node_modules");
+const linkDir = path.join(standaloneDir, ".next", "node_modules");
+
+const readPackage = (dir) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+};
+const copyReal = (from, to) => {
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.cpSync(from, to, { recursive: true, dereference: true });
+};
+
+/** Copy a root-level package and, transitively, every root-level package it depends on. */
+function shipWithDependencies(startNames) {
+  const done = new Set();
+  const queue = [...startNames];
+  while (queue.length) {
+    const name = queue.shift();
+    if (done.has(name)) continue;
+    done.add(name);
+    const from = path.join(projectModules, name);
+    const pkg = readPackage(from);
+    if (!pkg) continue; // optional dependency that isn't installed on this platform
+    copyReal(from, path.join(standaloneModules, name));
+    for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
+      // A dependency nested inside the package came along with the copy.
+      if (fs.existsSync(path.join(from, "node_modules", dep, "package.json"))) continue;
+      queue.push(dep);
+    }
+  }
+  return done;
+}
+
+if (fs.existsSync(linkDir)) {
+  const externals = [];
+  for (const entry of fs.readdirSync(linkDir)) {
+    const linkPath = path.join(linkDir, entry);
+    const name = readPackage(linkPath)?.name || entry.replace(/-[0-9a-f]{8,}$/, "");
+    const source = path.join(projectModules, name);
+    if (!readPackage(source)) {
+      console.error(`External package ${name} (${entry}) is not installed; cannot ship it.`);
+      process.exit(1);
+    }
+    copyReal(source, linkPath);
+    externals.push(name);
+  }
+  const shipped = shipWithDependencies(externals);
+  console.log(`Shipped external packages ${externals.join(", ")} with ${shipped.size - externals.length} dependencies`);
+}
+
+// Nothing in what ships may point outside it.
+const links = [];
+const findLinks = (dir) => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (fs.lstatSync(full).isSymbolicLink()) links.push(path.relative(standaloneDir, full));
+    else if (entry.isDirectory()) findLinks(full);
+  }
+};
+findLinks(standaloneDir);
+if (links.length) {
+  console.error(`Links left in the standalone output: ${links.slice(0, 10).join(", ")}. Refusing to continue.`);
+  process.exit(1);
+}
+
 // The only things the standalone server needs at its top level.
 const KEEP = new Set(["server.js", "package.json", "node_modules", ".next", "public"]);
 const removed = [];
@@ -80,6 +155,8 @@ for (const needed of [
   "server.js",
   "node_modules/next/package.json",
   "node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js",
+  "node_modules/vectra/package.json",
+  "node_modules/uuid/dist/cjs/index.js",
   ".next/BUILD_ID",
 ]) {
   if (!fs.existsSync(path.join(standaloneDir, needed))) {
