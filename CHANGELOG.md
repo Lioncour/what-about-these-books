@@ -15,7 +15,7 @@ Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend
 
 ### Fixed — the desktop app and its installer (first real launch since the review)
 
-A smoke test that launches Electron for real (`npm run smoke`, also in CI) found four
+A smoke test that launches Electron for real (`npm run smoke`, also in CI) found five
 problems the browser build could not show:
 
 - **The installer shipped `.env` and `.env.local`** and the whole project (sources, tests,
@@ -35,13 +35,19 @@ problems the browser build could not show:
   A port now counts as free only if nobody answers on it, and the app waits for a reply
   only our server gives (`/api/config`) before opening the window.
 
+- **The build only ran on the machine that made it.** The unbundled packages (vectra,
+  epub2) were links into the project's `node_modules`, and their dependencies were traced
+  only partly. CI's first run of the smoke test caught it on Linux. The build step now
+  ships real copies with their dependency trees and fails if a link is left. The
+  installer grew from 182 MB to about 205 MB as a result.
+
 Also: web links in answers open in the system browser instead of doing nothing; the
 startup AWS check is skipped in smoke runs; `description` and `author` in package.json.
 
 The smoke test (`scripts/electron-smoke.mjs`): `--prod` runs the standalone build from a
 copy outside the repo, `--packaged` runs `dist/win-unpacked`, `--busy-port` occupies 3000
-first, `--real-data` uses your library instead of an empty temp one. Verified here: dev
-7/7 with a busy port, standalone 12/12, packaged 13/13 with the real library.
+first, `--real-data` uses your library instead of an empty temp one. Verified: dev 7/7
+with a busy port, standalone and packaged 13/13 here, and 13/13 on Linux in CI.
 
 ### Changed — librarians on a cheaper model, and the rest of the roadmap
 

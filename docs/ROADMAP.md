@@ -33,8 +33,9 @@ changelog is the record).
 
 ## Later
 
-- Installer size (182 MB): the standalone `node_modules` carries `sharp` and the full AWS
-  SDK; check what the server really loads.
+- Installer size: vectra brings 93 dependencies (an OpenAI client, cheerio, …) that the
+  app never calls, on top of `sharp` and the full AWS SDK. Check what the server really
+  loads, or replace vectra with a small local index.
 - Code signing for the installer (Windows SmartScreen warns on unsigned builds).
 - macOS / Linux packaging (config exists, never built).
 - `PUBLIC_MODE` as a real read-only deployment (auth, rate limits) or remove it; the old
