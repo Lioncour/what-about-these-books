@@ -1,41 +1,25 @@
 "use client";
 
 import BrandMark from "@/components/BrandMark";
-import { formatTitlesPhrase } from "@/components/chat/format";
-
-function suggestionsFor(hasFocus: boolean, bookCount: number): string[] {
-  if (hasFocus) {
-    return [
-      "What's this one about?",
-      "Who matters most here?",
-      "Any pop-culture references?",
-      "Find a memorable quote",
-    ];
-  }
-  if (bookCount > 0) {
-    return [
-      "Any pop culture references in the books?",
-      "Who shows up across the series?",
-      "Help me pick what to reread",
-      "How many times is Skippy mentioned in the first 7 books?",
-    ];
-  }
-  return ["What can you do?", "How do I add a book?"];
-}
+import { formatTitlesPhrase, welcomeSuggestions } from "@/components/chat/format";
 
 /** The empty conversation: a greeting and a few questions to start from. */
 export default function WelcomePanel({
   companionMode,
   bookCount,
   recentTitles,
-  hasFocus,
+  focusKind,
+  firstTitle,
   onAsk,
 }: {
   companionMode: boolean;
   bookCount: number;
   /** Display titles (already cleaned) of the most recent books. */
   recentTitles: string[];
-  hasFocus: boolean;
+  /** What is in focus, if anything: the starter questions fit it. */
+  focusKind: "book" | "series" | null;
+  /** Display title of the first book on the shelves, for the "In <title>, …" starter. */
+  firstTitle?: string;
   onAsk: (question: string) => void;
 }) {
   const titlesPhrase = formatTitlesPhrase(recentTitles);
@@ -55,7 +39,7 @@ export default function WelcomePanel({
             </p>
           )}
           <div className="animate-rise-in stagger-2 mt-9 flex flex-col items-start gap-3">
-            {suggestionsFor(hasFocus, bookCount).map((suggestion) => (
+            {welcomeSuggestions(focusKind, bookCount, firstTitle).map((suggestion) => (
               <button
                 key={suggestion}
                 type="button"

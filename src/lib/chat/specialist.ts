@@ -6,8 +6,8 @@ import {
   searchBookKeyword,
   loadBookSpecialistProfile,
   getBookById,
+  type BookSpecialistProfile,
 } from "@/lib/book-store";
-import { DEFAULT_BEDROCK_MODEL_ID } from "@/lib/bedrock-client";
 import { getReindexState } from "@/lib/reindex-manager";
 import {
   fingerprintQuestion,
@@ -17,6 +17,7 @@ import {
 } from "@/lib/quality-store";
 import { isLibraryManagementInput } from "@/lib/chat/library-commands";
 import { extractKeywords } from "@/lib/chat/intent";
+import { callSpecialistClaude, resolveSpecialistModel } from "@/lib/chat/specialist-model";
 import type {
   SpecialistAnswer,
   SpecialistConfidence,
@@ -24,25 +25,46 @@ import type {
   StreamSpecialistReport,
 } from "@/lib/chat/types";
 
-export type { StreamSpecialistReport };
+/**
+ * Capitalised words the entity graph picks up at the start of sentences and in dialogue.
+ * The graph takes any capitalised word for a name; these never are one.
+ */
+const NOT_A_NAME = new Set(
+  (
+    "the that this these those there then than they them their you your yours what when where which who whom whose why how " +
+    "and but for nor not with without from into onto over under after before because since while until unless although though " +
+    "she her hers his him its our ours all any some one two three four five six seven eight nine ten first second none most more " +
+    "much many each every both either neither other another such same only just even also still again once now here " +
+    "yes yeah yep nope okay well hey hmm huh ugh wow whoa oops damn crap shit hell holy sorry please thank thanks sure right " +
+    "good great fine like let lets can could would should will shall may might must did does are was were has have had having " +
+    "come give get got look listen tell see wait stop maybe perhaps anyway instead except besides however whatever plus part " +
+    "really actually probably technically unfortunately sometimes nothing something everything anything everyone someone " +
+    "anyone nobody people sir maam mister miss chapter prologue epilogue don didn isn wasn won"
+  ).split(" ")
+);
 
 export function deriveMainCharacters(bookIds: string[]): { name: string; mentions: number; books: number }[] {
   const graph = getEntityGraph();
-  const nodes = graph.nodes.filter(
-    (n) =>
-      n.type === "character" &&
-      n.mentions >= 2 &&
-      n.books.some((b: string) => bookIds.includes(b))
-  );
-  const weighted = nodes.map((n) => {
-    const scopeBooks = n.books.filter((b: string) => bookIds.includes(b)).length;
-    return {
-      name: n.name,
-      mentions: n.mentions,
-      books: scopeBooks,
-      score: n.mentions * Math.max(scopeBooks, 1),
-    };
-  });
+  const inScope = new Set(bookIds);
+  // The graph holds one node per name and book; a character is the sum of its nodes.
+  const byName = new Map<string, { name: string; mentions: number; books: Set<string> }>();
+  for (const n of graph.nodes) {
+    if (n.type !== "character" || n.mentions < 2) continue;
+    const books = n.books.filter((b: string) => inScope.has(b));
+    if (!books.length) continue;
+    const key = n.name.toLowerCase();
+    if (NOT_A_NAME.has(key)) continue;
+    const row = byName.get(key) || { name: n.name, mentions: 0, books: new Set<string>() };
+    row.mentions += n.mentions;
+    for (const b of books) row.books.add(b);
+    byName.set(key, row);
+  }
+  const weighted = [...byName.values()].map((row) => ({
+    name: row.name,
+    mentions: row.mentions,
+    books: row.books.size,
+    score: row.mentions * Math.max(row.books.size, 1),
+  }));
   weighted.sort((a, b) => b.score - a.score);
   if (!weighted.length) return [];
   const max = weighted[0].score;
@@ -157,73 +179,32 @@ function specialistCacheKey(bookId: string, question: string, modelId: string): 
   return fingerprintQuestion(`${bookId}::${modelId}::${book?.addedAt || ""}::${reindexedAt}`, question);
 }
 
-export async function askBookSpecialist(params: {
+export interface SpecialistRequest {
   bookId: string;
   bookTitle: string;
   userQuestion: string;
+  /** A fixed model from Settings; empty means auto (cheaper models first, see `specialist-model.ts`). */
   modelId?: string;
   signal?: AbortSignal;
   /** Semantic passages for this book from the request's one seed query (skips a re-embed). */
   seedPassages?: Array<{ text: string; location: string }>;
-}): Promise<SpecialistAnswer & { reasked?: boolean; scorecard?: StreamSpecialistReport["scorecard"] }> {
-  if (isLibraryManagementInput(params.userQuestion)) {
-    return {
-      bookTitle: params.bookTitle,
-      confidence: "high",
-      directAnswer:
-        "Skipped — this is a library management command (delete/reindex/list), not a question about book content.",
-      numericEstimate: null,
-      findings: [],
-      caveats: ["Handled by the library command handler in chat, not per-book specialists."],
-    };
-  }
+}
 
-  const modelId = params.modelId || DEFAULT_BEDROCK_MODEL_ID;
-  const cacheKey = specialistCacheKey(params.bookId, params.userQuestion, modelId);
-  const cached = getCachedSpecialistAnswer(cacheKey) as
-    | (ReturnType<typeof getCachedSpecialistAnswer> & { findings?: unknown; numericEstimate?: unknown })
-    | null;
-  // Only entries that carry their findings are usable; older ones (no findings) are bypassed.
-  if (cached && Array.isArray(cached.findings)) {
-    return {
-      bookTitle: params.bookTitle,
-      confidence: parseSpecialistConfidence(cached.confidence),
-      directAnswer: cached.answer,
-      numericEstimate: typeof cached.numericEstimate === "number" ? cached.numericEstimate : null,
-      findings: parseFindings(cached.findings),
-      caveats: ["Served from specialist cache"],
-    };
-  }
+export type SpecialistResult = SpecialistAnswer & {
+  reasked?: boolean;
+  scorecard?: StreamSpecialistReport["scorecard"];
+  /** Claude calls this answer cost so far (0: cache, skipped command). */
+  calls: number;
+  /**
+   * The book had passages and the librarian still found nothing: a deeper second read
+   * (`reaskBookSpecialist`) may help. Such an answer is not cached or scored yet; the
+   * caller either re-asks or keeps it (`keepSpecialistAnswer`).
+   */
+  canReask: boolean;
+};
 
-  if (isDryRun()) {
-    // Eval dry run: this librarian would be asked. Count the call; touch no cache or scorecard.
-    await callClaudeText("", 1, 0, modelId, { signal: params.signal });
-    return {
-      bookTitle: params.bookTitle,
-      confidence: "low",
-      directAnswer: DRY_RUN_TEXT,
-      numericEstimate: null,
-      findings: [],
-      caveats: ["Dry run"],
-    };
-  }
-
-  params.signal?.throwIfAborted();
-  const semantic = params.seedPassages?.length
-    ? params.seedPassages
-    : await queryBook(params.bookId, params.userQuestion, 16);
-  const words = extractKeywords(params.userQuestion);
-  const keyword = words.length ? searchBookKeyword(params.bookId, words, 40) : [];
-  const profile = loadBookSpecialistProfile(params.bookId);
-
-  let context = [
-    ...semantic.map((s, i) => `[S${i + 1} ${s.location}] ${s.text}`),
-    ...keyword.map((k, i) => `[K${i + 1} ${k.label}] ${k.snippet}`),
-  ]
-    .slice(0, 80)
-    .join("\n\n");
-
-  const specialistPrompt = `You are the specialist AI for the single book "${params.bookTitle}".
+const specialistSystemPrompt = (bookTitle: string, profile: BookSpecialistProfile | null) =>
+  `You are the specialist AI for the single book "${bookTitle}".
 You must answer ONLY from evidence in context. Return STRICT JSON:
 {
   "confidence": "high|medium|low",
@@ -238,129 +219,195 @@ Rules:
 - Include all concrete findings you can prove from context.
 ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profile.keyTopics.join(", ")}` : ""}`;
 
-  const raw = await callClaudeText(
+function buildContext(
+  semantic: Array<{ text: string; location: string }>,
+  keyword: Array<{ label: string; snippet: string }>,
+  max: number
+): string {
+  return [
+    ...semantic.map((s, i) => `[S${i + 1} ${s.location}] ${s.text}`),
+    ...keyword.map((k, i) => `[K${i + 1} ${k.label}] ${k.snippet}`),
+  ]
+    .slice(0, max)
+    .join("\n\n");
+}
+
+function parseSpecialistJson(raw: string): Partial<Omit<SpecialistAnswer, "bookTitle">> | null {
+  const json = extractJsonObject(raw);
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Partial<Omit<SpecialistAnswer, "bookTitle">>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function withScore(params: SpecialistRequest, result: SpecialistResult): SpecialistResult {
+  const score = updateSpecialistScorecard({
+    bookId: params.bookId,
+    bookTitle: params.bookTitle,
+    confidence: result.confidence,
+    findingsCount: result.findings.length,
+  });
+  return {
+    ...result,
+    scorecard: {
+      precisionEstimate: score.precisionEstimate,
+      recallEstimate: score.recallEstimate,
+      total: score.total,
+    },
+  };
+}
+
+/** Cache the final answer (findings travel with it, so a cache hit still has sources) and score it. */
+function settle(params: SpecialistRequest, result: SpecialistResult, modelId: string): SpecialistResult {
+  // `findings` and `numericEstimate` ride along beyond the store's entry type.
+  const row = {
+    key: specialistCacheKey(params.bookId, params.userQuestion, modelId),
+    bookId: params.bookId,
+    answer: result.directAnswer,
+    confidence: result.confidence,
+    findingsCount: result.findings.length,
+    findings: result.findings,
+    numericEstimate: result.numericEstimate,
+    createdAt: new Date().toISOString(),
+  };
+  setCachedSpecialistAnswer(row);
+  return { ...withScore(params, result), canReask: false };
+}
+
+/** The model that gave each still-open first read: the final answer is cached under it. */
+const answeredBy = new WeakMap<SpecialistResult, string>();
+
+/**
+ * One librarian reads its book once. An empty answer from a book that had passages
+ * comes back with `canReask`; whether a second, deeper read is worth a call is the
+ * caller's decision (it knows whether more books are about to be read anyway).
+ */
+export async function askBookSpecialist(params: SpecialistRequest): Promise<SpecialistResult> {
+  const base = { bookTitle: params.bookTitle, numericEstimate: null, findings: [], calls: 0, canReask: false };
+  if (isLibraryManagementInput(params.userQuestion)) {
+    return {
+      ...base,
+      confidence: "high",
+      directAnswer:
+        "Skipped — this is a library management command (delete/reindex/list), not a question about book content.",
+      caveats: ["Handled by the library command handler in chat, not per-book specialists."],
+    };
+  }
+
+  // Looked up under the model the call would start with; an answer is stored under the
+  // model that gave it, which after a fallback is the starting model of later requests.
+  const cacheKey = specialistCacheKey(params.bookId, params.userQuestion, resolveSpecialistModel(params.modelId));
+  const cached = getCachedSpecialistAnswer(cacheKey) as
+    | (ReturnType<typeof getCachedSpecialistAnswer> & { findings?: unknown; numericEstimate?: unknown })
+    | null;
+  // Only entries that carry their findings are usable; older ones (no findings) are bypassed.
+  // A dry run plans as if nothing were cached, so its call counts don't depend on what
+  // was asked before.
+  if (!isDryRun() && cached && Array.isArray(cached.findings)) {
+    return {
+      ...base,
+      confidence: parseSpecialistConfidence(cached.confidence),
+      directAnswer: cached.answer,
+      numericEstimate: typeof cached.numericEstimate === "number" ? cached.numericEstimate : null,
+      findings: parseFindings(cached.findings),
+      caveats: ["Served from specialist cache"],
+    };
+  }
+
+  if (isDryRun()) {
+    // Eval dry run: this librarian would be asked. Count the call; touch no cache, scorecard or model state.
+    await callSpecialistClaude("", 1, 0, { fixedModelId: params.modelId, signal: params.signal });
+    return { ...base, calls: 1, confidence: "low", directAnswer: DRY_RUN_TEXT, caveats: ["Dry run"] };
+  }
+
+  params.signal?.throwIfAborted();
+  const semantic = params.seedPassages?.length
+    ? params.seedPassages
+    : await queryBook(params.bookId, params.userQuestion, 16);
+  const words = extractKeywords(params.userQuestion);
+  const keyword = words.length ? searchBookKeyword(params.bookId, words, 40) : [];
+  const context = buildContext(semantic, keyword, 80);
+
+  const { text: raw, modelId } = await callSpecialistClaude(
     `Question: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
     1400,
     0.1,
-    modelId,
-    { system: specialistPrompt, signal: params.signal }
-  );
-  const json = extractJsonObject(raw);
-  if (!json) {
-    const fallback: SpecialistAnswer = {
-      bookTitle: params.bookTitle,
-      confidence: "low",
-      directAnswer: "Unable to parse specialist output.",
-      numericEstimate: null,
-      findings: [],
-      caveats: ["Specialist returned non-JSON output."],
-    };
-    const score = updateSpecialistScorecard({
-      bookId: params.bookId,
-      bookTitle: params.bookTitle,
-      confidence: fallback.confidence,
-      findingsCount: fallback.findings.length,
-    });
-    return {
-      ...fallback,
-      scorecard: {
-        precisionEstimate: score.precisionEstimate,
-        recallEstimate: score.recallEstimate,
-        total: score.total,
-      },
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(json) as Omit<SpecialistAnswer, "bookTitle">;
-    let answer: SpecialistAnswer = {
-      bookTitle: params.bookTitle,
-      confidence: parseSpecialistConfidence(parsed.confidence),
-      directAnswer: parsed.directAnswer || "No answer provided.",
-      numericEstimate: typeof parsed.numericEstimate === "number" ? parsed.numericEstimate : null,
-      findings: parseFindings(parsed.findings),
-      caveats: Array.isArray(parsed.caveats) ? parsed.caveats.map(String) : [],
-    };
-    let reasked = false;
-
-    // Re-ask only when the book had passages to read and the specialist still found nothing.
-    if (answer.findings.length === 0 && semantic.length > 0 && !params.signal?.aborted) {
-      const deepSemantic = await queryBook(params.bookId, params.userQuestion, 28);
-      const deepKeyword = words.length ? searchBookKeyword(params.bookId, words, 80) : [];
-      context = [
-        ...deepSemantic.map((s, i) => `[S${i + 1} ${s.location}] ${s.text}`),
-        ...deepKeyword.map((k, i) => `[K${i + 1} ${k.label}] ${k.snippet}`),
-      ]
-        .slice(0, 120)
-        .join("\n\n");
-      const retryRaw = await callClaudeText(
-        `RE-ASK: Previous answer had no findings. Extract all evidence again, strictly from context.\nQuestion: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
-        1400,
-        0.05,
-        modelId,
-        { system: specialistPrompt, signal: params.signal }
-      );
-      const retryJson = extractJsonObject(retryRaw);
-      if (retryJson) {
-        try {
-          const retryParsed = JSON.parse(retryJson) as Omit<SpecialistAnswer, "bookTitle">;
-          answer = {
-            ...answer,
-            confidence: parseSpecialistConfidence(retryParsed.confidence) || answer.confidence,
-            directAnswer: retryParsed.directAnswer || answer.directAnswer,
-            numericEstimate:
-              typeof retryParsed.numericEstimate === "number"
-                ? retryParsed.numericEstimate
-                : answer.numericEstimate,
-            findings: Array.isArray(retryParsed.findings)
-              ? parseFindings(retryParsed.findings)
-              : answer.findings,
-            caveats: Array.isArray(retryParsed.caveats)
-              ? retryParsed.caveats.map(String)
-              : answer.caveats,
-          };
-          reasked = true;
-        } catch {
-          // keep original answer
-        }
-      }
+    {
+      fixedModelId: params.modelId,
+      system: specialistSystemPrompt(params.bookTitle, loadBookSpecialistProfile(params.bookId)),
+      signal: params.signal,
     }
-
-    // Findings travel with the entry so a cache hit still has sources.
-    const cacheRow = {
-      key: cacheKey,
-      bookId: params.bookId,
-      answer: answer.directAnswer,
-      confidence: answer.confidence,
-      findingsCount: answer.findings.length,
-      findings: answer.findings,
-      numericEstimate: answer.numericEstimate,
-      createdAt: new Date().toISOString(),
-    };
-    setCachedSpecialistAnswer(cacheRow);
-    const score = updateSpecialistScorecard({
-      bookId: params.bookId,
-      bookTitle: params.bookTitle,
-      confidence: answer.confidence,
-      findingsCount: answer.findings.length,
-    });
-    return {
-      ...answer,
-      reasked,
-      scorecard: {
-        precisionEstimate: score.precisionEstimate,
-        recallEstimate: score.recallEstimate,
-        total: score.total,
-      },
-    };
-  } catch {
-    return {
-      bookTitle: params.bookTitle,
+  );
+  const parsed = parseSpecialistJson(raw);
+  if (!parsed) {
+    // Not cached: the next ask should get a real answer.
+    return withScore(params, {
+      ...base,
+      calls: 1,
       confidence: "low",
       directAnswer: "Unable to parse specialist output.",
-      numericEstimate: null,
-      findings: [],
-      caveats: ["Specialist JSON parse failed."],
-    };
+      caveats: ["Specialist returned non-JSON output."],
+    });
   }
+
+  const result: SpecialistResult = {
+    ...base,
+    calls: 1,
+    confidence: parseSpecialistConfidence(parsed.confidence),
+    directAnswer: parsed.directAnswer || "No answer provided.",
+    numericEstimate: typeof parsed.numericEstimate === "number" ? parsed.numericEstimate : null,
+    findings: parseFindings(parsed.findings),
+    caveats: Array.isArray(parsed.caveats) ? parsed.caveats.map(String) : [],
+  };
+  if (result.findings.length === 0 && semantic.length > 0) {
+    const open = { ...result, canReask: true };
+    answeredBy.set(open, modelId);
+    return open;
+  }
+  return settle(params, result, modelId);
+}
+
+/** Keep an empty first read as the final answer (no call left for a second read). */
+export function keepSpecialistAnswer(params: SpecialistRequest, first: SpecialistResult): SpecialistResult {
+  if (!first.canReask) return first;
+  return settle(params, first, answeredBy.get(first) || resolveSpecialistModel(params.modelId));
+}
+
+/** The second, deeper read of a book whose first read found nothing: more passages, one more call. */
+export async function reaskBookSpecialist(
+  params: SpecialistRequest,
+  first: SpecialistResult
+): Promise<SpecialistResult> {
+  if (!first.canReask) return first;
+  if (params.signal?.aborted) return keepSpecialistAnswer(params, first);
+  const words = extractKeywords(params.userQuestion);
+  const deepSemantic = await queryBook(params.bookId, params.userQuestion, 28);
+  const deepKeyword = words.length ? searchBookKeyword(params.bookId, words, 80) : [];
+  const context = buildContext(deepSemantic, deepKeyword, 120);
+  const { text: raw, modelId } = await callSpecialistClaude(
+    `RE-ASK: Previous answer had no findings. Extract all evidence again, strictly from context.\nQuestion: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
+    1400,
+    0.05,
+    {
+      fixedModelId: params.modelId,
+      system: specialistSystemPrompt(params.bookTitle, loadBookSpecialistProfile(params.bookId)),
+      signal: params.signal,
+    }
+  );
+  const retry = parseSpecialistJson(raw);
+  const merged: SpecialistResult = retry
+    ? {
+        ...first,
+        confidence: parseSpecialistConfidence(retry.confidence),
+        directAnswer: retry.directAnswer || first.directAnswer,
+        numericEstimate: typeof retry.numericEstimate === "number" ? retry.numericEstimate : first.numericEstimate,
+        findings: Array.isArray(retry.findings) ? parseFindings(retry.findings) : first.findings,
+        caveats: Array.isArray(retry.caveats) ? retry.caveats.map(String) : first.caveats,
+        reasked: true,
+      }
+    : first;
+  return settle(params, { ...merged, calls: first.calls + 1 }, modelId);
 }

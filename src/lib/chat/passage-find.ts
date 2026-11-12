@@ -10,6 +10,7 @@ import {
 import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import {
   extractPassageSearchTerms,
+  looksLikeRecipeQuestion,
   normalizeUserQuestion,
 } from "@/lib/chat/intent";
 
@@ -20,6 +21,12 @@ export type SmartPassageHit = {
   snippet: string;
   score: number;
   reason: string;
+  /** Recipe questions: the items the passage lists, when it really lists some. */
+  items?: string[];
+  /** Recipe questions: what the passage calls the dish ("called it the …"). */
+  name?: string;
+  /** Recipe questions: every content word of the question is in the passage (as a phrase, if several). */
+  aboutAll?: boolean;
 };
 
 type PassageFindIntent = {
@@ -27,152 +34,245 @@ type PassageFindIntent = {
   subjectTerms: string[];
 };
 
-const FALSE_FRIENDS = [/burgermeister/i];
+/** Words of a recipe question that say "recipe", not what the recipe is for. */
+const RECIPE_FILLER = new Set([
+  "recipe", "recipes", "receipt", "reciept", "recipie", "recipt", "ingredient", "ingredients",
+  "make", "makes", "made", "making", "cook", "cooks", "cooked", "cooking", "prepare", "bake",
+  "brew", "mix", "instructions", "exactly", "does", "did", "are", "was", "were", "has", "have",
+  "goes", "into", "what", "whats", "which", "who", "tell", "give", "list", "get", "got",
+  "there", "they", "them", "their", "his", "her", "its", "from", "would", "could", "should",
+  "again", "called", "famous", "favorite", "favourite", "own", "the", "and", "for", "you",
+  "how", "can", "any", "all",
+]);
 
-function diversifySubject(terms: string[]): string[] {
-  const out = new Set(terms.map((t) => t.toLowerCase()));
-  if ([...out].some((t) => /cheeseburger|hamburger|burger/.test(t))) {
-    out.add("cheeseburger");
-    out.add("hamburger");
-    out.add("burger");
-    out.add("fluff");
-    out.add("chili");
+const escapeRegex = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** What a recipe question is about: "Can you find the cheeseburger recipe?" → ["cheeseburger"]. */
+function recipeSubjectTerms(question: string): string[] {
+  const out: string[] = [];
+  for (const raw of normalizeUserQuestion(question).replace(/[^\w\s'’-]/g, " ").split(/\s+/)) {
+    const w = raw.replace(/^['’-]+|['’-]+$/g, "").replace(/['’]s$/, "").toLowerCase();
+    if (w.length < 3 || /^\d+$/.test(w) || RECIPE_FILLER.has(w) || out.includes(w)) continue;
+    out.push(w);
   }
-  if ([...out].some((t) => /recipe|receipt|reciept/.test(t))) {
-    out.add("recipe");
-    out.add("ingredients");
-  }
-  return [...out].filter((t) => t.length >= 3);
+  // Generic scope words only matter when nothing else is left.
+  const specific = out.filter((w) => !/^(books?|library|series|novels?|find|show|please|where|about|this|that|some|with)$/.test(w));
+  return specific.slice(0, 6);
 }
 
 function classifyPassageFindIntent(question: string): PassageFindIntent {
   const text = normalizeUserQuestion(question).toLowerCase();
-  const subjectTerms = diversifySubject(extractPassageSearchTerms(question));
-  const wantsRecipe =
-    /\brecipe|receipt|reciept|recipie|recipt|ingredient|how to (?:make|cook)|instructions\b/i.test(
-      text
-    );
-
-  if (
-    wantsRecipe ||
-    (/\b(cheeseburger|hamburger|burger)\b/i.test(text) &&
-      /\b(find|is there|there is)\b/i.test(text))
-  ) {
-    return { kind: "recipe", subjectTerms };
-  }
-  if (/\bquote|passage|line where\b/i.test(text)) {
-    return { kind: "quote", subjectTerms };
-  }
-  if (/\bscene|chapter when\b/i.test(text)) {
-    return { kind: "scene", subjectTerms };
-  }
+  if (looksLikeRecipeQuestion(text)) return { kind: "recipe", subjectTerms: recipeSubjectTerms(question) };
+  const subjectTerms = extractPassageSearchTerms(question);
+  if (/\bquote|passage|line where\b/i.test(text)) return { kind: "quote", subjectTerms };
+  if (/\bscene|chapter when\b/i.test(text)) return { kind: "scene", subjectTerms };
   return { kind: "general", subjectTerms };
 }
 
-function windowAround(text: string, index: number, radius = 360): string {
-  const start = Math.max(0, index - radius);
-  const end = Math.min(text.length, index + radius);
-  return text.slice(start, end).replace(/\s+/g, " ").trim();
+// --- Lists in narrated text --------------------------------------------------
+
+const MAX_ITEM_WORDS = 6;
+const MAX_ITEM_CHARS = 48;
+/** A piece that starts like a clause is the sentence going on, not another item. */
+const CLAUSE_START =
+  /^(?:he|she|they|we|i|it|you|that|which|who|whom|when|while|because|but|so|then|if|as|until|although|though|where|after|before)\b/i;
+/** Tails that say where an item goes, not what it is. */
+const ITEM_TAIL = /\s+(?:on top|on the side|to taste|for good measure|as well|too)$/i;
+
+const NOT_A_THING =
+  /^(?:except|oops|well|yes|no|okay|ok|maybe|anyway|however|though|too|also|please|sorry|right|sure|etc|not|never|again|now|here|there|really|actually|obviously|basically)$/i;
+const DANGLING_END = /\s(?:our|the|an?|my|your|his|her|their|its|of|to|and|or|with|in|on|at|for|from|by|is|was|are|were)$/i;
+
+function cleanItem(raw: string): string | null {
+  const item = raw
+    .replace(/^[\s\-–—•*]+/, "")
+    .replace(/^(?:and|or|plus|then)\s+/i, "")
+    .replace(/^(?:also|finally|of course)\s+/i, "")
+    .replace(ITEM_TAIL, "")
+    .replace(/[\s.,;:!?]+$/, "")
+    .trim();
+  if (item.length < 3 || item.length > MAX_ITEM_CHARS) return null;
+  if (item.split(/\s+/).length > MAX_ITEM_WORDS) return null;
+  if (CLAUSE_START.test(item) || /["“”]/.test(item)) return null;
+  // A thing has a noun in it: not a lone aside ("except", "oops") or a phrase left hanging ("took our").
+  if (NOT_A_THING.test(item) || DANGLING_END.test(item)) return null;
+  return item.charAt(0).toUpperCase() + item.slice(1);
 }
 
-function scoreRecipePage(text: string): { score: number; reason: string; anchor: number } | null {
-  const lower = text.toLowerCase();
-  if (FALSE_FRIENDS.some((re) => re.test(lower))) return null;
-  if (!/cheeseburger|hamburger|\bburgers?\b|fluff screamer/.test(lower)) return null;
-
-  let score = 0;
-  const reasons: string[] = [];
-
-  if (/cheeseburger/.test(lower)) {
-    score += 4;
-    reasons.push("cheeseburger");
-  } else if (/hamburger/.test(lower)) {
-    score += 3;
-    reasons.push("hamburger");
-  } else if (/\bburgers?\b/.test(lower)) {
-    score += 2;
-    reasons.push("burger");
-  }
-
-  if (/\brecipe\b/.test(lower) && !/\brecipe for (?:nothing|disaster|trouble|success|failure|chaos)\b/.test(lower)) {
-    score += 6;
-    reasons.push("recipe");
-  }
-  if (/ingredient/.test(lower)) {
-    score += 5;
-    reasons.push("ingredients");
-  }
-  if (/imagine this.{0,80}(?:cheeseburger|hamburger|burger)|(?:cheeseburger|hamburger|burger).{0,120}(?:imagine this|wait for it|waaaaait)/.test(lower)) {
-    score += 8;
-    reasons.push("described-assembly");
-  }
-  if (/fluff screamer/.test(lower)) {
-    score += 12;
-    reasons.push("fluff-screamer");
-  } else if (/marshmallow fluff/.test(lower) && /cheeseburger|hamburger|burger/.test(lower)) {
-    score += 3;
-    reasons.push("fluff-topping");
-  }
-  if (/raw onions?.{0,60}chili|chili sauce.{0,60}butter|pat of butter/.test(lower) && /cheeseburger|hamburger|burger/.test(lower)) {
-    score += 8;
-    reasons.push("ingredient-list");
-  }
-  if (/lettuce|tomato|onion|pickle|ketchup|mustard|patty|bun/.test(lower) && /cheeseburger|hamburger|burger/.test(lower)) {
-    score += 3;
-    reasons.push("toppings");
-  }
-  if (/oklahoma fried onion|fried onion burgers|make cheeseburgers|grandmother.?s recipes/.test(lower)) {
-    score += 6;
-    reasons.push("cooking-plan");
-  }
-  if (/how (?:to|do (?:you|i)|we) (?:make|cook|grill).{0,40}(?:cheeseburger|hamburger|burger)/.test(lower)) {
-    score += 5;
-    reasons.push("how-to");
-  }
-  if (
-    /tablespoon|teaspoon|cup of|preheat|degrees/.test(lower) &&
-    /cheeseburger|hamburger|burger|recipe/.test(lower)
-  ) {
-    score += 4;
-    reasons.push("measures");
-  }
-
-  // Bare craving mentions
-  if (score <= 8 && /craving|dreamed about|no cheeseburgers|more cheeseburgers/.test(lower)) {
-    score -= 4;
-  }
-
-  // Need a real build signal, not just the word cheeseburger + minutes
-  const reasonKey = reasons.join("+");
-  const hasBuild =
-    /fluff-screamer|ingredient-list|described-assembly|cooking-plan|how-to|recipe|ingredients/.test(
-      reasonKey
-    );
-  if (!hasBuild) return null;
-
-  // Prefer real builds; drop weak co-mentions
-  if (score < 16 && !/fluff-screamer|ingredient-list|cooking-plan/.test(reasonKey)) return null;
-
-  if (score < 10) return null;
-
-  const anchorCandidates = [
-    "fluff screamer",
-    "marshmallow fluff",
-    "cheeseburger",
-    "hamburger",
-    "fried onion",
-    "recipe",
-  ];
-  let anchor = 0;
-  for (const a of anchorCandidates) {
-    const idx = lower.indexOf(a);
-    if (idx >= 0) {
-      anchor = idx;
-      break;
+/**
+ * "raw onions, hot and spicy chili sauce, a pat of butter, and Marshmallow Fluff on top"
+ * → the items. Only commas separate items ("hot and spicy" stays whole), except a final
+ * "X and Y" without a serial comma. An item cut off by a dash ("and— wait for it") ends
+ * the list. Null when fewer than three things are listed.
+ */
+function splitInlineList(segment: string, after = ""): string[] | null {
+  const pieces = segment.split(/[,;]/).map((p) => p.trim()).filter(Boolean);
+  if (pieces.length >= 2) {
+    const last = pieces[pieces.length - 1];
+    if (!/^(?:and|or)\b/i.test(last)) {
+      const at = last.toLowerCase().lastIndexOf(" and ");
+      if (at > 0) pieces.splice(pieces.length - 1, 1, last.slice(0, at), last.slice(at + 5));
     }
   }
+  const items: string[] = [];
+  const add = (item: string) => {
+    if (!items.some((i) => i.toLowerCase() === item.toLowerCase())) items.push(item);
+  };
+  for (const piece of pieces) {
+    const pause = piece.match(/^(?:and|or)?\s*[-–—]+\s*(.*)$/i);
+    if (pause || /^(?:and|or)$/i.test(piece)) {
+      const delayed = pause && items.length >= 2 ? itemAfterPause(pause[1], after) : null;
+      if (delayed) add(delayed);
+      break;
+    }
+    const item = cleanItem(piece);
+    if (!item) {
+      if (items.length >= 3) break;
+      return null;
+    }
+    add(item);
+  }
+  return items.length >= 3 ? items : null;
+}
 
-  return { score, reason: reasons.join("+"), anchor };
+/**
+ * A last item held back for effect: "…, a pat of butter, and- Wait for it. Waaaait for
+ * it. Marshmallow Fluff." The pause phrase and its repetitions (sentences ending on the
+ * same words) are skipped; the next sentence is the item if it is short enough to be one.
+ */
+function itemAfterPause(pausePhrase: string, after: string): string | null {
+  const tail = (s: string) => s.toLowerCase().replace(/[^a-z\s]/g, "").trim().split(/\s+/).slice(-2).join(" ");
+  const pauseTail = tail(pausePhrase);
+  const sentences = after.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  for (const sentence of sentences) {
+    if (pauseTail && tail(sentence) === pauseTail) continue;
+    return /[.!]$/.test(sentence) ? cleanItem(sentence) : null;
+  }
+  return null;
+}
+
+/** Words after which a comma list is a list of parts. A bare "with" only counts next to the dish. */
+const LIST_CUE =
+  /\b(?:(with)|made\s+(?:of|from|with|out\s+of)|topped\s+with|filled\s+with|stuffed\s+with|loaded\s+with|consist(?:s|ed|ing)?\s+of|ingredients?(?:\s+(?:are|were|is|was|include[sd]?|list))?|you(?:['’]ll|\s+will)?\s+need)\s*[:\-–—]?\s+/gi;
+
+/** "A cheeseburger, with …" → "Cheeseburger": the thing the list is built on. */
+function listBase(before: string): string | null {
+  const m = before.match(/(?:^|[.!?:]\s+)(?:an?|the|one)\s+([A-Za-z][\w'’-]*(?:\s+[A-Za-z][\w'’-]*){0,2}),?\s*$/i);
+  return m ? cleanItem(m[1]) : null;
+}
+
+function inlineLists(text: string, subject: RegExp[]): Array<{ at: number; items: string[] }> {
+  const found: Array<{ at: number; items: string[] }> = [];
+  for (const m of text.matchAll(LIST_CUE)) {
+    const at = m.index ?? 0;
+    // The sentence so far. "Mara ate with Joe, Skippy and the others" is company, not a
+    // recipe: a bare "with" needs the dish in front of it ("A cheeseburger, with …").
+    // Either the dish the question asks about, or "A <thing>, with …".
+    const before = text.slice(Math.max(0, at - 90), at).split(/[.!?]\s+/).pop() || "";
+    const base = m[1] ? listBase(before) : null;
+    // The asked-about dish must stand right in front of the "with" ("his chili with beans, …"),
+    // not merely earlier in the sentence ("…the wormholes into position with our railguns, …").
+    if (m[1] && !base && !subject.some((re) => re.test(before.slice(-36)))) continue;
+    const rest = text.slice(at + m[0].length, at + m[0].length + 400);
+    const end = rest.search(/[.!?](?:\s|$)|\n\s*\n|[:(]/);
+    const items =
+      end === -1 ? splitInlineList(rest.slice(0, 280)) : splitInlineList(rest.slice(0, end), rest.slice(end + 1));
+    if (!items) continue;
+    found.push({ at, items: base && !items.includes(base) ? [base, ...items] : items });
+  }
+  return found;
+}
+
+/** "1. Flour 2. Eggs 3. Milk" or "1) …" in running order. */
+function numberedList(text: string): { at: number; items: string[] } | null {
+  const marks = [...text.matchAll(/(?:^|\s)(\d{1,2})[.)]\s+(?=\S)/g)];
+  for (let start = 0; start < marks.length; start++) {
+    if (Number(marks[start][1]) !== 1) continue;
+    const items: string[] = [];
+    for (let i = start; i < marks.length && Number(marks[i][1]) === items.length + 1; i++) {
+      const from = (marks[i].index ?? 0) + marks[i][0].length;
+      const to = i + 1 < marks.length ? marks[i + 1].index ?? text.length : Math.min(text.length, from + 120);
+      const line = text.slice(from, to).split(/\n/)[0].replace(/[\s.,;]+$/, "").trim();
+      if (!line || line.length > 110) break;
+      items.push(line.charAt(0).toUpperCase() + line.slice(1));
+    }
+    if (items.length >= 3) return { at: marks[start].index ?? 0, items };
+  }
+  return null;
+}
+
+/** Three or more short lines in a row: bulleted, or under a line that ends with a colon. */
+function lineList(text: string): { at: number; items: string[] } | null {
+  const lines = text.split(/\r?\n/);
+  const runs: Array<{ at: number; items: string[] }> = [];
+  let offset = 0;
+  let run: string[] = [];
+  let runAt = 0;
+  let open = false;
+  const close = () => {
+    if (run.length >= 3) runs.push({ at: runAt, items: run });
+    run = [];
+  };
+  for (const raw of lines) {
+    const line = raw.trim();
+    const bullet = /^[-•*]\s+\S/.test(line);
+    const item = line && (bullet || open) && !/[.!?:]$/.test(line) ? cleanItem(line) : null;
+    if (item) {
+      if (!run.length) runAt = offset;
+      run.push(item);
+    } else {
+      close();
+      // A heading line ("Ingredients:", "You will need:") opens a list; anything else closes it.
+      open = /:$/.test(line);
+    }
+    offset += raw.length + 1;
+  }
+  close();
+  return runs.sort((x, y) => y.items.length - x.items.length)[0] || null;
+}
+
+/** The list a passage gives, preferring real list layout, then the inline list nearest `anchor`. */
+function extractListedItems(text: string, anchor: number, subject: RegExp[]): string[] | null {
+  const structured = lineList(text) || numberedList(text);
+  if (structured) return structured.items.slice(0, 20);
+  const inline = inlineLists(text, subject);
+  if (!inline.length) return null;
+  inline.sort((a, b) => Math.abs(a.at - anchor) - Math.abs(b.at - anchor));
+  return inline[0].items.slice(0, 20);
+}
+
+/** "He called it the Fluff Screamer." → "Fluff Screamer". */
+function extractDishName(text: string): string | null {
+  const m = text.match(
+    /\b(?:call(?:s|ed|ing)?\s+(?:it|this|that|them|these)|(?:is|was|are|were)\s+called|named\s+(?:it|this|that)|known\s+as|dubbed(?:\s+(?:it|this))?)\s+(?:the\s+|an?\s+)?["“‘']?([A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3})/
+  );
+  return m?.[1]?.replace(/['’]$/, "").trim() || null;
+}
+
+// --- Finding the passage -----------------------------------------------------
+
+/** The passage shown: a little before the match, more after it (the description follows the name). */
+const WINDOW_BEFORE = 220;
+const WINDOW_AFTER = 560;
+const MAX_ANCHORS_PER_PAGE = 60;
+
+function collapse(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** A window of raw text around `index`, cut at word boundaries. */
+function rawWindow(text: string, index: number): { text: string; anchor: number } {
+  let start = Math.max(0, index - WINDOW_BEFORE);
+  let end = Math.min(text.length, index + WINDOW_AFTER);
+  if (start > 0) {
+    const space = text.indexOf(" ", start);
+    if (space !== -1 && space < index) start = space + 1;
+  }
+  if (end < text.length) {
+    const space = text.lastIndexOf(" ", end);
+    if (space > index) end = space;
+  }
+  return { text: text.slice(start, end), anchor: index - start };
 }
 
 function resolveBookScope(bookId: string): ReturnType<typeof listBooks> {
@@ -190,8 +290,86 @@ function resolveBookScope(bookId: string): ReturnType<typeof listBooks> {
 }
 
 /**
- * Smart passage finder: recipe asks scan full pages for recipe-like
- * burger/food builds across the library — not naive keyword dumps.
+ * A question word as it may appear in the text: plural, or (from five letters) inside a
+ * longer word, so "burger" finds "cheeseburger" without a list of dishes.
+ */
+function termPattern(term: string): string {
+  const t = escapeRegex(term);
+  return term.length >= 5 ? `\\b\\w*${t}\\w*` : `\\b${t}(?:e?s)?\\b`;
+}
+
+/**
+ * Recipe questions: the passage that best matches the question's content words, with
+ * extra weight when it actually lists things or names the dish. One hit per page.
+ */
+function findRecipePassages(terms: string[], books: ReturnType<typeof listBooks>): SmartPassageHit[] {
+  // No dish in the question ("is there a recipe in here?"): look for the word itself.
+  const anchors = terms.length ? terms : ["recipe", "ingredients"];
+  const termRes = anchors.map((t) => new RegExp(termPattern(t), "i"));
+  const subjectRes = terms.length ? termRes : [];
+  const anyTerm = new RegExp(anchors.map(termPattern).join("|"), "gi");
+  const phrase = terms.length > 1 ? new RegExp(terms.map(escapeRegex).join("[\\s-]+"), "i") : null;
+  const hits: SmartPassageHit[] = [];
+
+  for (const book of books) {
+    const pages = loadBookPages(book.id);
+    if (!pages) continue;
+    for (const page of pages) {
+      let best: SmartPassageHit | null = null;
+      let lastScored = -Infinity;
+      let seen = 0;
+      for (const m of page.text.matchAll(anyTerm)) {
+        const index = m.index ?? 0;
+        // Overlapping windows say the same thing.
+        if (index - lastScored < WINDOW_BEFORE) continue;
+        if (++seen > MAX_ANCHORS_PER_PAGE) break;
+        lastScored = index;
+        const win = rawWindow(page.text, index);
+        const matched = termRes.filter((re) => re.test(win.text)).length;
+        const reasons = [`${matched}/${anchors.length} words`];
+        let score = matched * 4;
+        if (phrase?.test(win.text)) {
+          score += 4;
+          reasons.push("phrase");
+        }
+        const items = extractListedItems(win.text, win.anchor, subjectRes);
+        if (items) {
+          score += 6 + Math.min(items.length, 6);
+          reasons.push("list");
+        }
+        if (terms.length && /\b(?:recipe|ingredients?)\b/i.test(win.text)) {
+          score += 2;
+          reasons.push("recipe-word");
+        }
+        const name = items ? extractDishName(win.text) : null;
+        if (name) {
+          score += 2;
+          reasons.push("named");
+        }
+        if (!best || score > best.score) {
+          best = {
+            bookId: book.id,
+            bookTitle: book.title,
+            label: page.label,
+            snippet: collapse(win.text),
+            score,
+            reason: reasons.join("+"),
+            aboutAll: matched === anchors.length && (!phrase || phrase.test(win.text)),
+            ...(items ? { items } : {}),
+            ...(name ? { name } : {}),
+          };
+        }
+      }
+      if (best) hits.push(best);
+    }
+  }
+  return hits;
+}
+
+/**
+ * Smart passage finder. Recipe questions ("X recipe", "how do you make X", "ingredients
+ * of X") scan the stored pages for the passage about X and pull out what it lists;
+ * other finds are a scored keyword search.
  */
 export function findSmartPassages(opts: {
   question: string;
@@ -201,26 +379,10 @@ export function findSmartPassages(opts: {
   const intent = classifyPassageFindIntent(opts.question);
   const maxHits = opts.maxHits ?? 8;
   const bookId = opts.bookId || "all";
-  const books = resolveBookScope(bookId);
   const hits: SmartPassageHit[] = [];
 
   if (intent.kind === "recipe") {
-    for (const book of books) {
-      const pages = loadBookPages(book.id);
-      if (!pages) continue;
-      for (const page of pages) {
-        const scored = scoreRecipePage(page.text);
-        if (!scored) continue;
-        hits.push({
-          bookId: book.id,
-          bookTitle: book.title,
-          label: page.label,
-          snippet: windowAround(page.text, scored.anchor, 380),
-          score: scored.score,
-          reason: scored.reason,
-        });
-      }
-    }
+    hits.push(...findRecipePassages(intent.subjectTerms, resolveBookScope(bookId)));
   } else {
     const terms = intent.subjectTerms.length ? intent.subjectTerms : [opts.question];
     const raw =
@@ -229,19 +391,19 @@ export function findSmartPassages(opts: {
         : bookId !== "all"
           ? searchBookKeyword(bookId, terms, 40).map((m) => ({
               ...m,
+              bookId,
               bookTitle: getBookById(bookId)?.title || "",
             }))
           : searchAllBooksKeyword(terms, 50);
 
     for (const m of raw) {
       const lower = m.snippet.toLowerCase();
-      if (FALSE_FRIENDS.some((re) => re.test(lower))) continue;
       let score = 1;
       for (const t of intent.subjectTerms) {
         if (lower.includes(t.toLowerCase())) score += 2;
       }
       hits.push({
-        bookId: "",
+        bookId: (m as { bookId?: string }).bookId || "",
         bookTitle: m.bookTitle,
         label: m.label,
         snippet: m.snippet,
@@ -272,87 +434,12 @@ export function findSmartPassages(opts: {
   return out;
 }
 
-/** Pull a named recipe + ingredient list from narrated text when possible. */
-function extractRecipeCard(snippet: string): {
-  name: string | null;
-  ingredients: string[];
-} | null {
-  const text = snippet.replace(/\s+/g, " ").trim();
-  if (!text) return null;
-
-  // Prefer well-known named builds first
-  if (/fluff\s+screamer/i.test(text)) {
-    const ingredients = [
-      "Cheeseburger",
-      "Raw onions",
-      "Hot and spicy chili sauce",
-      "A pat of butter",
-      "Marshmallow Fluff",
-    ];
-    // If the passage lists them, prefer parsed list when it looks complete
-    const listed = text.match(
-      /A\s+cheeseburger,\s*with\s+(.+?)\s+Marshmallow\s+Fluff/i
-    );
-    if (listed?.[1]) {
-      const mid = listed[1]
-        .replace(/,?\s*and-?\s*Wait for it\.?/gi, ",")
-        .replace(/,?\s*Waaaaaait for it\.?/gi, ",")
-        .replace(/\bon top\b/gi, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      const parts = mid
-        .split(",")
-        .map((p) => p.replace(/^[\s\-–—and]+/i, "").trim())
-        .filter((p) => p.length >= 3);
-      if (parts.length >= 2) {
-        return {
-          name: "Fluff Screamer",
-          ingredients: [
-            "Cheeseburger",
-            ...parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)),
-            "Marshmallow Fluff",
-          ],
-        };
-      }
-    }
-    return { name: "Fluff Screamer", ingredients };
-  }
-
-  const nameMatch = text.match(
-    /\b(?:called|named)\s+(?:a\s+)?['‘“"]([^'"”’]{3,40})['’”"]/i
-  );
-  const name = nameMatch?.[1]?.trim() || null;
-
-  const build = text.match(
-    /A\s+(cheeseburger|hamburger|burger),\s*with\s+([^.]{10,220})/i
-  );
-  const ingredients: string[] = [];
-  if (build) {
-    ingredients.push(build[1].charAt(0).toUpperCase() + build[1].slice(1).toLowerCase());
-    for (const part of build[2].split(",")) {
-      const item = part
-        .replace(/\band-?\s*Wait for it\.?/gi, "")
-        .replace(/^[\s\-–—and]+/i, "")
-        .replace(/\bon top\b/gi, "")
-        .trim();
-      if (item.length >= 3) ingredients.push(item.charAt(0).toUpperCase() + item.slice(1));
-    }
-  }
-
-  const seen = new Set<string>();
-  const unique = ingredients.filter((i) => {
-    const k = i.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-
-  if (!name && unique.length < 2) return null;
-  return { name, ingredients: unique };
-}
+const titleCase = (words: string[]) => words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 
 /**
  * Short answer for the chat bubble. Sources carry the clickable references.
+ * A recipe question gets a card (name + listed items) when the passage lists items,
+ * and the passage itself when it doesn't.
  */
 export function formatPassageFindAnswer(opts: {
   question: string;
@@ -360,47 +447,20 @@ export function formatPassageFindAnswer(opts: {
 }): string {
   const intent = classifyPassageFindIntent(opts.question);
   if (!opts.hits.length) {
-    if (intent.kind === "recipe") {
-      return "I couldn’t find an actual burger recipe in your indexed books — mostly cravings and meals, not a build with ingredients.";
+    if (intent.kind === "recipe" && intent.subjectTerms.length) {
+      return `I couldn’t find a passage about **${intent.subjectTerms.join(" ")}** in your indexed books.`;
     }
     return "I couldn’t find a clear match in your indexed books.";
   }
 
   const top = opts.hits[0];
   const book = cleanBookDisplayTitle(top.bookTitle);
-  const where = `${book} · ${top.label}`;
+  const from = `From **${book} · ${top.label}**. Open **Sources** below to read the passage.`;
 
-  if (intent.kind === "recipe") {
-    const card = extractRecipeCard(top.snippet);
-    if (card && (card.name || card.ingredients.length >= 2)) {
-      const lines: string[] = [];
-      lines.push(card.name ? `**${card.name}**` : "**Cheeseburger build**");
-      lines.push("");
-      if (card.ingredients.length) {
-        for (const item of card.ingredients) {
-          lines.push(`- ${item}`);
-        }
-        lines.push("");
-      } else {
-        lines.push(top.snippet.slice(0, 320).trim());
-        lines.push("");
-      }
-      lines.push(`From **${where}**. Open **Sources** below to read the passage.`);
-      return lines.join("\n");
-    }
-
-    return [
-      "Closest burger build I found:",
-      "",
-      top.snippet.slice(0, 420).trim(),
-      "",
-      `From **${where}**. Open **Sources** below to read the passage.`,
-    ].join("\n");
+  if (intent.kind === "recipe" && top.items?.length) {
+    const title = top.name || (intent.subjectTerms.length ? titleCase(intent.subjectTerms) : "Recipe");
+    return [`**${title}**`, "", ...top.items.map((item) => `- ${item}`), "", from].join("\n");
   }
 
-  return [
-    top.snippet.slice(0, 420).trim(),
-    "",
-    `From **${where}**. Open **Sources** below to read the passage.`,
-  ].join("\n");
+  return [top.snippet.slice(0, 600).trim(), "", from].join("\n");
 }

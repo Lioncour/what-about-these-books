@@ -34,3 +34,13 @@ export interface SectionProps {
   settings: AISettings;
   update: UpdateSettings;
 }
+
+/** `modelRoutingStatus` of GET /api/settings: which model the librarians run on right now. */
+export interface ModelRoutingStatus {
+  specialist: {
+    mode: "auto" | "fixed";
+    modelId: string;
+    tried: Array<{ modelId: string; usable: boolean; checkedAt?: string; reason?: string }>;
+  };
+  mainModelId: string;
+}

@@ -17,7 +17,6 @@ export interface ScopeText {
   specialists: {
     /** STATUS while the roster is being picked (library only). */
     roster?: string;
-    consulting(count: number, roster: string): string;
     merging: string;
   };
   rag: {
@@ -68,7 +67,6 @@ User message: ${question}`,
     },
     specialists: {
       roster: "Building specialist roster from your books...",
-      consulting: (count, roster) => `Consulting ${count} Librarian agents${roster ? `: ${roster}` : ""}...`,
       merging: "Main AI is merging specialist reports...",
     },
     rag: {
@@ -135,7 +133,6 @@ User message: ${question}`,
       miss: "No exact quote matches found in this series",
     },
     specialists: {
-      consulting: (count, roster) => `Consulting ${count} series Librarians${roster ? `: ${roster}` : ""}...`,
       merging: "Main AI is merging specialist reports...",
     },
     rag: {
@@ -201,7 +198,6 @@ User message: ${question}`,
       miss: "No exact quote matches found in this book",
     },
     specialists: {
-      consulting: (_count, roster) => `Consulting ${roster} for "${bookTitle}"...`,
       merging: "Main AI is composing final answer...",
     },
     rag: {

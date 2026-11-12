@@ -5,6 +5,7 @@ import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import { runChatInProcess } from "@/lib/chat/handler";
 import { DRY_RUN_TEXT } from "@/lib/chat/request-context";
 import { decodeStreamLine } from "@/lib/chat/stream-protocol";
+import type { ChatMessage } from "@/lib/chat/types";
 
 /**
  * Chat eval: gold questions run through the real pipeline, checked for the route taken,
@@ -18,6 +19,8 @@ import { decodeStreamLine } from "@/lib/chat/stream-protocol";
 export interface ChatEvalCase {
   id: string;
   question: string;
+  /** The conversation before the question (a follow-up case), oldest first. */
+  history?: ChatMessage[];
   /** Why this case exists (the bug or behaviour it pins). */
   note?: string;
   /** Scope by display title, so the file doesn't depend on book ids. Default: whole library. */
@@ -222,7 +225,7 @@ export function observeChat(lines: string[], route: string | null): ChatEvalObse
   return observed;
 }
 
-export function loadChatEvalCases(): ChatEvalCase[] {
+function loadChatEvalCases(): ChatEvalCase[] {
   const file = join(process.cwd(), "eval", "chat-cases.json");
   if (!existsSync(file)) return [];
   const parsed = JSON.parse(readFileSync(file, "utf-8")) as unknown;
@@ -253,6 +256,20 @@ function resolveCaseScope(testCase: ChatEvalCase): { bookId: string; bookTitle: 
   return { bookId: "all", bookTitle: "All Books" };
 }
 
+/** The case's earlier turns as chat messages; throws when one is malformed. */
+export function caseHistory(testCase: Pick<ChatEvalCase, "history">): ChatMessage[] {
+  if (testCase.history === undefined) return [];
+  if (!Array.isArray(testCase.history)) throw new Error('"history" must be a list of { role, content } turns');
+  return testCase.history.map((turn, i) => {
+    const role = (turn as Partial<ChatMessage> | null)?.role;
+    const content = (turn as Partial<ChatMessage> | null)?.content;
+    if ((role !== "user" && role !== "assistant") || typeof content !== "string" || !content.trim()) {
+      throw new Error(`history[${i}] needs a role ("user" or "assistant") and a content string`);
+    }
+    return { role, content };
+  });
+}
+
 export async function runChatEval(opts: { live?: boolean; ids?: string[] } = {}): Promise<ChatEvalReport> {
   const all = loadChatEvalCases();
   const cases = opts.ids?.length ? all.filter((c) => opts.ids!.includes(c.id)) : all;
@@ -263,7 +280,10 @@ export async function runChatEval(opts: { live?: boolean; ids?: string[] } = {})
     let observed: ChatEvalObserved;
     try {
       const scope = resolveCaseScope(testCase);
-      const run = await runChatInProcess({ ...scope, question: testCase.question }, { dryRun: !opts.live });
+      const run = await runChatInProcess(
+        { ...scope, messages: caseHistory(testCase), question: testCase.question },
+        { dryRun: !opts.live }
+      );
       observed = observeChat(run.lines, run.route?.kind ?? null);
     } catch (error) {
       observed = { ...observeChat([], null), error: error instanceof Error ? error.message : String(error) };

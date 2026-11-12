@@ -31,12 +31,25 @@ export default function Composer({
 
   useImperativeHandle(ref, () => ({ focus: () => textareaRef.current?.focus() }), []);
 
-  // Grow with the text, up to a few lines.
+  // Grow with the text, up to a few lines. Also re-measure when the field's width
+  // changes: measured while the column is still narrow (first paint, rail resize) the
+  // placeholder wraps and the empty field would stay at its maximum height.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    };
+    fit();
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [value]);
 
   return (

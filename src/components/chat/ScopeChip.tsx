@@ -1,23 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { askingHint, formatAskingLine, type ScopeInfo } from "@/components/chat/format";
+import {
+  askingHint,
+  formatAskingLine,
+  pickedLimitNote,
+  type ScopeInfo,
+} from "@/components/chat/format";
+import { exactSeriesFor, type ScopeSeries } from "@/components/chat/scope";
 import type { LibraryBook } from "@/hooks/useLibrary";
 
 /**
  * Above the question field: which books the question will be asked against, and a
  * picker to change that before sending. Nothing picked means the whole library, one
- * book is a focus book, two or more are read together and nothing else is.
+ * book is a focus book, every book of one series is that series, and any other two
+ * or more are read together and nothing else is.
  */
 export default function ScopeChip({
   preview,
   books,
+  series,
   selectedIds,
   onApply,
 }: {
   preview: ScopeInfo;
   books: LibraryBook[];
-  /** The focus book or the picked set, as the picker's starting point. */
+  series: ScopeSeries[];
+  /** The focus book, the series' books or the picked set, as the picker's starting point. */
   selectedIds: string[];
   onApply: (ids: string[]) => void;
 }) {
@@ -73,12 +82,17 @@ export default function ScopeChip({
   };
 
   const hint = askingHint(preview);
+  const wholeSeries = exactSeriesFor(draft, series);
   const draftLabel =
     draft.length === 0
       ? "Ask the whole library"
       : draft.length === 1
         ? "Ask this book"
-        : `Ask these ${draft.length} books`;
+        : wholeSeries
+          ? "Ask this series"
+          : `Ask these ${draft.length} books`;
+  // A whole series keeps its own reading order on the server; the cap note is for loose picks.
+  const limitNote = wholeSeries ? "" : pickedLimitNote(draft.length);
 
   return (
     <div className="relative mb-1.5" ref={panelRef}>
@@ -102,9 +116,10 @@ export default function ScopeChip({
           </span>
           {hint && <span className="text-muted/70"> · {hint}</span>}
         </span>
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`}>
-          <path d="m6 15 6-6 6 6" />
-        </svg>
+        {/* Says what a click does in either state, instead of an arrow that flips. */}
+        <span className="shrink-0 rounded border border-border/70 px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.12em] text-muted/90 transition-colors group-hover:border-primary/40 group-hover:text-primary">
+          {open ? "Close" : "Change"}
+        </span>
       </button>
 
       {open && (
@@ -174,7 +189,14 @@ export default function ScopeChip({
             })}
           </div>
 
-          <div className="flex items-center gap-2 border-t border-border/70 px-3 py-2.5">
+          {limitNote && (
+            <p className="border-t border-border/70 px-3 pt-2 text-[11px] leading-snug text-muted">
+              {limitNote}
+            </p>
+          )}
+          <div
+            className={`flex items-center gap-2 px-3 py-2.5 ${limitNote ? "" : "border-t border-border/70"}`}
+          >
             <button
               type="button"
               onClick={() => apply([])}

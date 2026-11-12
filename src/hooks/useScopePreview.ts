@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { normalizeScope, type ScopeInfo } from "@/components/chat/format";
 import type { FocusBook } from "@/components/chat/messages";
-import type { LibraryBook } from "@/hooks/useLibrary";
+import { localScopePreview } from "@/components/chat/scope";
+import type { LibraryBook, LibrarySeries } from "@/hooks/useLibrary";
 
 const DEBOUNCE_MS = 300;
 
 /**
  * What the next question will be asked against, for the composer's scope chip.
  *
- * A focus book and hand-picked books are known here. With the whole library in play
+ * A focus book, a series and hand-picked books are known here. With the whole library in play
  * the server is asked (debounced) whether the question names a book; that reads the
  * catalog only, no AI call.
  */
@@ -19,18 +20,20 @@ export function useScopePreview({
   focus,
   pickedIds,
   books,
+  series,
 }: {
   question: string;
   focus: FocusBook | null;
   pickedIds: string[];
   books: LibraryBook[];
+  series: LibrarySeries[];
 }): ScopeInfo {
   // The server's answer, tagged with the question it was for, so a stale answer
   // is never shown and nothing has to be reset inside the effect.
   const [named, setNamed] = useState<{ question: string; scope: ScopeInfo } | null>(null);
 
   const trimmed = question.trim();
-  const local = pickedIds.length >= 2 || focus !== null;
+  const local = focus !== null || pickedIds.length >= 2;
   const worthAsking = !local && trimmed.length >= 4 && books.length > 0;
 
   useEffect(() => {
@@ -56,14 +59,8 @@ export function useScopePreview({
     };
   }, [worthAsking, trimmed]);
 
-  if (pickedIds.length >= 2) {
-    const picked = pickedIds
-      .map((id) => books.find((b) => b.id === id))
-      .filter((b): b is LibraryBook => !!b)
-      .map((b) => ({ id: b.id, title: b.title }));
-    return { books: picked, reason: "picked" };
-  }
-  if (focus) return { books: [{ id: focus.id, title: focus.title }], reason: "focus" };
+  const known = localScopePreview(focus, pickedIds, books, series);
+  if (known) return known;
   if (worthAsking && named?.question === trimmed && named.scope.reason === "named") return named.scope;
   return { books: [], reason: "all", ...(books.length ? { more: books.length } : {}) };
 }

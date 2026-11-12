@@ -1,4 +1,6 @@
 // Runs the evals against the app's local server (start it first: `npm run dev:web`).
+// Exit code: 0 when every case passed (or the server isn't running: a hint is printed),
+// 2 when a case failed, 1 when the server answered with an error.
 //
 //   npm run eval:harness            retrieval eval (eval/gold-questions.json)
 //   npm run eval:chat               chat eval, dry: routes, scope, exact answers, planned calls
@@ -23,8 +25,9 @@ try {
       })
     : await fetch(base);
 } catch (error) {
-  console.error(`Could not reach ${base}. Is the app running (npm run dev:web)?\n${error.message}`);
-  process.exit(1);
+  const why = error.cause?.code || error.message;
+  console.error(`Eval skipped: no server at ${base} (${why}). Start the app (npm run dev:web) or set EVAL_URL.`);
+  process.exit(0);
 }
 if (!res.ok) {
   console.error(`Eval request failed: ${res.status} ${res.statusText}\n${await res.text()}`);

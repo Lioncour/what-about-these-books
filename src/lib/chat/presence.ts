@@ -7,13 +7,6 @@ export function presenceStatus(raw: string, companionMode: boolean): string {
     [/^Running library command/i, "On it — updating your library…"],
     [/^Searching across your entire library/i, "Flipping through your whole shelf…"],
     [/^Building specialist roster/i, "Picking which books to reread with you…"],
-    [
-      /^Consulting (\d+) Librarian agents(?::\s*(.*))?/i,
-      (m) =>
-        m[2]
-          ? `Reading along in ${m[2]}…`
-          : `Reading along in ${m[1]} book${m[1] === "1" ? "" : "s"}…`,
-    ],
     [/^Main AI is merging specialist reports/i, "Putting the pieces together…"],
     [/^Main AI is composing final answer/i, "Writing this down for you…"],
     [/^Sending to Claude on Bedrock/i, "Remembering the passages with you…"],
@@ -33,4 +26,18 @@ export function presenceStatus(raw: string, companionMode: boolean): string {
     return typeof out === "function" ? out(m) : out;
   }
   return raw;
+}
+
+/** "Black Ops", "Black Ops and Valkyrie", "A, B and C", "A, B, C, D and 2 more". */
+export function listTitles(titles: string[], max = 4): string {
+  const shown = titles.slice(0, max);
+  const more = titles.length - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  if (shown.length <= 1) return shown[0] || "";
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/** STATUS while the librarians read: the books by name, the same in companion and raw mode. */
+export function readingStatus(titles: string[]): string {
+  return titles.length ? `Reading ${listTitles(titles)}…` : "Reading…";
 }

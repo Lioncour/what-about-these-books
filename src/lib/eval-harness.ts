@@ -27,7 +27,7 @@ export interface EvalReport {
   results: EvalResult[];
 }
 
-export function loadEvalCases(): EvalCase[] {
+function loadEvalCases(): EvalCase[] {
   const file = join(process.cwd(), "eval", "gold-questions.json");
   if (!existsSync(file)) return [];
   try {

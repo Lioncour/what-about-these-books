@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@/lib/chat/types";
 import {
+  extractBooksMentioningTarget,
   extractWhoIsTarget,
   looksLikeHaveYouReadQuestion,
   looksLikeLibraryCountQuestion,
@@ -21,6 +22,7 @@ import { looksLikePopCultureSurvey } from "@/lib/chat/theme-survey";
  */
 export type ChatRouteKind =
   | "mention_count"
+  | "books_mentioning"
   | "passage_find"
   | "theme_pop_culture"
   | "quote_lookup"
@@ -70,6 +72,17 @@ export function routeChatQuestion(opts: {
       reason: target
         ? `Exact count for "${target}"`
         : "Count question without a clear target",
+      usesTool: true,
+    };
+  }
+
+  // "Which books mention X?" — a per-book exact lookup, no reading needed
+  const mentioned = extractBooksMentioningTarget(question);
+  if (mentioned) {
+    return {
+      kind: "books_mentioning",
+      target: mentioned,
+      reason: `Which books mention "${mentioned}"`,
       usesTool: true,
     };
   }
@@ -158,6 +171,18 @@ export function routeChatQuestion(opts: {
     };
   }
 
+  // "and Joe?" right after a count: the same exact count for another name. Checked last,
+  // so a greeting or a real question after a count is never taken for a name.
+  const followUp = resolveCountTarget(question, opts.messages);
+  if (followUp) {
+    return {
+      kind: "mention_count",
+      target: followUp,
+      reason: `Count follow-up for "${followUp}"`,
+      usesTool: true,
+    };
+  }
+
   return {
     kind: "open_rag",
     reason: "Open question — specialists / RAG",
@@ -170,6 +195,8 @@ export function describeRoute(route: ChatRoute): string {
   switch (route.kind) {
     case "mention_count":
       return route.target ? `Counting mentions of ${route.target}…` : "Figuring out who to count…";
+    case "books_mentioning":
+      return `Checking which books mention ${route.target}…`;
     case "passage_find":
       return "Searching for the best matching passages…";
     case "theme_pop_culture":

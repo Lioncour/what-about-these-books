@@ -51,6 +51,23 @@
     }
   },
   {
+    "id": "count-follow-up",
+    "history": [
+      { "role": "user", "content": "How many times is Skippy mentioned in Columbus Day?" },
+      { "role": "assistant", "content": "**Skippy** appears **766** times in Columbus Day (exact text search, not an AI estimate)." }
+    ],
+    "question": "and Joe?",
+    "note": "A short follow-up after a count is the same exact count for another name, in the same book.",
+    "expect": {
+      "route": "mention_count",
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "maxClaudeCalls": 0,
+      "textIncludes": ["**Joe** appears", "in Columbus Day", "not an AI estimate"],
+      "sourcesInclude": ["Columbus Day"]
+    }
+  },
+  {
     "id": "not-a-count",
     "question": "How often does Joe appear nervous?",
     "note": "\"appear <adjective>\" is a reading question, not an exact count of \"Joe\".",
@@ -83,7 +100,19 @@
     "id": "short-plot-question",
     "question": "Does Joe survive?",
     "note": "Short questions without a keyword used to skip the books entirely.",
-    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1 }
+    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1, "maxClaudeCalls": 7 }
+  },
+  {
+    "id": "open-question-first-wave",
+    "question": "What does Skippy think of humans?",
+    "note": "An open question asks the three closest books first (4 calls), not six (7 calls).",
+    "expect": { "route": "open_rag", "scopeReason": "semantic", "minClaudeCalls": 2, "maxClaudeCalls": 7 }
+  },
+  {
+    "id": "breadth-question-reads-wide",
+    "question": "Compare how Skippy treats Joe across all the books",
+    "note": "Asking for breadth keeps all six librarians in one round.",
+    "expect": { "route": "open_rag", "minClaudeCalls": 7 }
   },
   {
     "id": "greeting",
@@ -98,8 +127,8 @@
   {
     "id": "which-books-mention",
     "question": "Which books in my library mention Mars?",
-    "note": "Was answered with \"You have 18 books.\"",
-    "expect": { "routeNot": ["library_count"] }
+    "note": "Was answered with \"You have 18 books.\", then by seven Claude calls. It is an exact lookup per book.",
+    "expect": { "route": "books_mentioning", "scopeReason": "all", "maxClaudeCalls": 0, "textIncludes": ["Mars", "of 18"] }
   },
   {
     "id": "who-is",
@@ -128,5 +157,49 @@
     "question": "What does \"the Elders left the galaxy long ago\" mean for the plot?",
     "note": "A quoted phrase inside a question is not a request to find the quote.",
     "expect": { "routeNot": ["quote_lookup"], "minClaudeCalls": 1 }
+  },
+  {
+    "id": "series-main-characters",
+    "question": "Who are the main characters?",
+    "series": "Expeditionary Force",
+    "note": "A series in focus: the answer is drawn from the series' books, from the character graph, without librarians.",
+    "expect": {
+      "route": "main_characters",
+      "scopeReason": "series",
+      "scopeIncludes": ["Columbus Day"],
+      "maxClaudeCalls": 1,
+      "textIncludes": ["**Skippy**", "**Joe**"],
+      "textExcludes": ["**The**", "**That**", "**You**"]
+    }
+  },
+  {
+    "id": "series-open-question",
+    "question": "What does Skippy think of humans?",
+    "series": "Expeditionary Force",
+    "note": "A series in focus is never narrowed to a first wave: its first six books are read in one round.",
+    "expect": { "route": "open_rag", "scopeReason": "series", "scopeIncludes": ["Columbus Day"], "minClaudeCalls": 7, "maxClaudeCalls": 9 }
+  },
+  {
+    "id": "recipe-named-dish",
+    "question": "Can you find the Fluff Screamer recipe?",
+    "note": "A recipe question is an exact lookup: the passage that lists the dish, no AI call.",
+    "expect": {
+      "route": "passage_find",
+      "maxClaudeCalls": 0,
+      "textIncludes": ["**Fluff Screamer**", "- Cheeseburger", "- Raw onions", "- Marshmallow Fluff", "From **Fallout"],
+      "sourcesInclude": ["Fallout"]
+    }
+  },
+  {
+    "id": "recipe-how-do-you-make",
+    "question": "How do you make a Fluff Screamer?",
+    "note": "\"How do you make X\" is a recipe question when a passage lists what goes in.",
+    "expect": { "route": "passage_find", "maxClaudeCalls": 0, "textIncludes": ["- Marshmallow Fluff"], "sourcesInclude": ["Fallout"] }
+  },
+  {
+    "id": "how-do-you-make-is-a-question",
+    "question": "How do you make a wormhole shift?",
+    "note": "\"How do you make X\" with no passage that lists anything is a reading question for the librarians.",
+    "expect": { "minClaudeCalls": 2, "textExcludes": ["Open **Sources** below"] }
   }
 ]

@@ -1,47 +1,40 @@
 # Roadmap
 
-What is open after the 2026-11-12 review and restructuring (see
+What is open after the 2026-11-12 review, restructuring and roadmap pass (see
 [REVIEW-2026-11-12.md](REVIEW-2026-11-12.md) and the changelog). Ordered by value for
 effort; move things as priorities change, and delete an item when it ships (the
 changelog is the record).
 
 ## Next
 
-1. **Cheaper model for specialists.** Every call runs on Opus today. Specialists do
-   extraction to JSON and are the bulk of the tokens; Sonnet or Haiku there, Opus only
-   for the orchestrator, would cut cost and latency several-fold. `modelRouting` and the
-   Advanced setting exist. Needs: which Bedrock model ids the AWS account can invoke
-   (owner has to check), then a default plus a fallback to the main model on
-   AccessDenied.
-2. **"Which books mention X?" without Claude.** The eval shows it goes to six librarians
-   plus the orchestrator (7 calls). It is a per-book exact count; answer it from the
-   stored text like the other counts.
-3. **Open questions cost 7 calls.** Any question that names no book asks six librarians.
-   Besides the cheaper model (item 1): ask only the two or three closest books first and
-   widen when they come back thin.
+1. **Entity graph quality.** The eval showed "The / That / You" as main characters; they
+   are filtered at read time now, but `knowledge-store.ts` still extracts noisy entities
+   at ingest ("Kristang" as a character). Extract names with better rules (or one cheap
+   Haiku pass per book at ingest) and rebuild the graph for existing books.
+2. **Live eval as a habit.** `npm run eval:chat -- --live` works; add a saved baseline
+   (cost and pass/fail per case) and print the difference, so a prompt or model change
+   shows what it did. Then tune the first wave (3 books) and the librarian model
+   (Haiku vs Sonnet) against answer quality, not just cost.
+3. **Electron check.** Everything since the review was verified in the browser build.
+   Launch the desktop app once (`npm run dev`), check the port pick, quit behaviour and
+   the installer (`npm run dist`), and add an Electron smoke test to CI.
 
 ## Soon
 
-4. **Replace the remaining `window.confirm` / `prompt` / `alert`** (chat delete, book
-   and series delete, series prompts) with `ConfirmDialog` / `AskDialog`.
-5. **Split `BookLibrary.tsx` (575) and `UploadArea.tsx` (526)** the way `page.tsx` was.
-6. **Prompt caching.** The stable rules/voice block is now in the `system` field; add
-   `cache_control` so repeated questions in a session reuse it.
-7. **Edit a book's title, author and cover in Manage** (Tidy covers the automatic part).
-8. **Presence copy**: "Reading along in Librarian A, …...…" punctuation; say the book
-   names instead of librarian names.
-9. **Recipe card** in `passage-find.ts` is burger-specific; either generalise or drop.
+4. **Token cost in currency** on the usage line and the settings page (needs a price
+   table per model; Haiku and Opus now differ a lot, so tokens alone mislead).
+5. **LLM router fallback.** When no heuristic in `intent.ts` fires with confidence, one
+   small Haiku call could pick the route instead of defaulting to the librarians.
+6. **Saved chats and the scope picker.** A chat remembers its pick; show it in Past
+   notes ("3 picked books") and let a question be re-asked against a different scope.
+7. **Upload**: the non-compact `UploadArea` variant is unused; remove it or use it for an
+   empty library.
 
 ## Later
 
-- Eval follow-ups: multi-turn cases (count follow-ups like "and Joe?"), a `--live` run
-  that compares cost against the previous run, cases for the series scope.
-- Scope picker follow-ups: tick a whole series as a series scope (keeps reading order and
-  "first N books" counts), remember the last pick per conversation, and say in the chip
-  when more than six books are picked that the librarians read the first six.
-- LLM router as a fallback when no heuristic in `intent.ts` fires with confidence.
-- Opus/Sonnet token cost in currency on the usage line (needs a price table per model).
 - macOS / Linux packaging (config exists, never built).
-- `PUBLIC_MODE` as a real read-only deployment (auth, rate limits) or remove it; the
-  old `deploy.sh` was deleted because it targeted Ollama.
-- Electron smoke test in CI (launch, wait for window, quit).
+- `PUBLIC_MODE` as a real read-only deployment (auth, rate limits) or remove it; the old
+  `deploy.sh` was deleted because it targeted Ollama.
+- Prompt caching: measured and skipped. The stable system text is 125–636 tokens, under
+  the 1024-token minimum, and the passages change per question. Revisit only if prompts
+  grow or a whole book is put in context.

@@ -7,6 +7,7 @@ export default function AskDialog({
   title,
   label,
   placeholder,
+  initialValue = "",
   confirmLabel = "Ask",
   onClose,
   onSubmit,
@@ -15,6 +16,8 @@ export default function AskDialog({
   title: string;
   label: string;
   placeholder?: string;
+  /** Text the field starts with (a rename); it is selected so typing replaces it. */
+  initialValue?: string;
   confirmLabel?: string;
   onClose: () => void;
   onSubmit: (value: string) => void;
@@ -23,7 +26,10 @@ export default function AskDialog({
 
   useEffect(() => {
     if (!open) return;
-    const t = window.setTimeout(() => inputRef.current?.focus(), 30);
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 30);
     return () => window.clearTimeout(t);
   }, [open]);
 
@@ -54,9 +60,9 @@ export default function AskDialog({
         <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
         <label className="mt-4 block text-xs font-medium text-muted">{label}</label>
         <input
-          key={title}
+          key={`${title}|${initialValue}`}
           ref={inputRef}
-          defaultValue=""
+          defaultValue={initialValue}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

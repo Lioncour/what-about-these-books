@@ -13,6 +13,54 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Changed — librarians on a cheaper model, and the rest of the roadmap
+
+- **Librarians run on Haiku automatically.** With no model set, the librarian calls try
+  Haiku 4.5, then Sonnet 4.5 (same region prefix as the main model), then the main model;
+  a model the account can't call is remembered for a week (`ops/model-routing.json`).
+  Auth and network errors never mark a model unusable. The orchestrator and single-call
+  answers stay on the main model. Settings → Advanced shows what is in use, with
+  "Auto", "Use main model for everything", a custom id and "Re-check".
+  `BEDROCK_SPECIALIST_MODEL_IDS` overrides the candidates. Live: an open question is
+  3 Haiku calls (~15k tokens) plus one Opus call (~1k), where it was 7 Opus calls.
+- **At most 8 librarian calls per question.** Thinness is judged on the first answers,
+  the second wave is read, and only then do still-empty librarians ask again.
+- **Status line names the books**: "Reading Black Ops, Valkyrie and Gateway…".
+- **Recipe card is general**: no dish names in the code; an ingredient list is shown only
+  when the passage really lists items.
+- **Follow-up counts** ("and Joe?") are routed as counts and count where the previous one
+  did.
+- **Main characters** no longer include sentence starters ("The", "That", "You").
+- **Edit a book** in Manage: title, author, replace cover (`PATCH /api/books`,
+  `POST /api/covers/<id>`; images checked by content, 5 MB max; duplicate titles refused).
+- **No more browser dialogs**: every confirm, prompt and alert is an in-app dialog that
+  names what it will do; destructive ones have a danger button.
+- **Scope picker**: ticking exactly one whole series asks it as a series (reading order,
+  "first N books"); more than six picked books says the librarians read the first six;
+  a saved chat remembers and restores its scope.
+- **UI split**: `BookLibrary.tsx` 575 → 181 and `UploadArea.tsx` 526 → 146 lines.
+- **Eval**: multi-turn cases (`history`), 24 cases; the script prints a hint and exits 0
+  when no server is running.
+- Fixed: the settings page showed stale token usage (each route kept its own in-memory
+  copy); the question field could start at its maximum height.
+- Prompt caching was measured and not added: the stable system text is 125–636 tokens,
+  under the 1024-token minimum.
+- 339 tests.
+
+### Changed — fewer Claude calls for the same answers
+
+- **Open questions ask the three closest books first.** The other three of the selection
+  are read only when those come back thin (no findings, or every librarian unsure); the
+  scope line then updates. Questions that ask for breadth ("compare", "across all the
+  books", "the series") still ask all six at once; a series in focus, a named book and
+  hand-picked books are never narrowed. Live on the real library: "What does Skippy think
+  of humans?" is 4 calls / 17k tokens in, where an open question was 7 calls.
+- **"Which books mention X?" is an exact lookup**, not seven Claude calls: the books with
+  counts, and the ones that don't mention it ("Mars is mentioned in 8 of 18 books…").
+  Also "In which books is X mentioned?" and "Does any book mention X?". Thematic wording
+  ("talk about") still goes to the librarians.
+- Eval: 18 cases, including one for each of the above.
+
 ### Added — chat eval
 
 - `npm run eval:chat` runs the gold questions in `eval/chat-cases.json` through the real

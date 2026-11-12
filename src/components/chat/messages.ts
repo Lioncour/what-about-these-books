@@ -22,8 +22,11 @@ export interface ChatSummary {
   bookTitle: string;
   title: string;
   updatedAt: string;
+  /** Books picked by hand for this conversation (absent in older chats). */
+  pickedIds?: string[];
 }
 
+/** The focus: a book, or a series as `{ id: "series:<id>", title: <series name> }`. */
 export interface FocusBook {
   id: string;
   title: string;

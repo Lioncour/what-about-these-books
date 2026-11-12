@@ -19,14 +19,25 @@ export interface LibraryBook {
   /** Display title. */
   title: string;
   series?: string;
+  seriesId?: string;
 }
 
-/** The library as the page needs it: how many books, recent titles, the focus book. */
+/** A series as the page needs it: its books that are on the shelves, in reading order. */
+export interface LibrarySeries {
+  id: string;
+  name: string;
+  bookIds: string[];
+}
+
+/** The library as the page needs it: how many books, recent titles, series, the focus (a book or a series). */
 export function useLibrary() {
   const libraryRef = useRef<BookLibraryHandle>(null);
   const [bookCount, setBookCount] = useState(0);
   const [recentTitles, setRecentTitles] = useState<string[]>([]);
   const [books, setBooks] = useState<LibraryBook[]>([]);
+  const [series, setSeries] = useState<LibrarySeries[]>([]);
+  // False until the first read of the shelves has landed.
+  const [loaded, setLoaded] = useState(false);
   const [focus, setFocus] = useState<FocusBook | null>(null);
 
   const reloadSummary = useCallback(() => {
@@ -38,11 +49,12 @@ export function useLibrary() {
     ])
       .then(([booksData, seriesData]) => {
         const books: BookRow[] = Array.isArray(booksData.books) ? booksData.books : [];
-        const seriesNames = new Map<string, string>(
-          (Array.isArray(seriesData.series) ? seriesData.series : []).map(
-            (s: { id: string; name: string }) => [s.id, s.name]
-          )
-        );
+        const seriesRows: Array<{ id: string; name: string; bookIds?: string[] }> = Array.isArray(
+          seriesData.series
+        )
+          ? seriesData.series
+          : [];
+        const seriesNames = new Map<string, string>(seriesRows.map((s) => [s.id, s.name]));
         setBookCount(books.length);
         const rows = books
           .filter((b) => b.id)
@@ -52,6 +64,7 @@ export function useLibrary() {
               id: String(b.id),
               title: cleanDisplayTitle(String(b.title || ""), { author: b.author, series }),
               series,
+              seriesId: series ? b.seriesId : undefined,
               order: typeof b.seriesOrder === "number" ? b.seriesOrder : Number.MAX_SAFE_INTEGER,
             };
           });
@@ -63,7 +76,19 @@ export function useLibrary() {
             a.order - b.order ||
             a.title.localeCompare(b.title)
         );
-        setBooks(rows.map(({ id, title, series }) => ({ id, title, series })));
+        setBooks(rows.map(({ id, title, series, seriesId }) => ({ id, title, series, seriesId })));
+        // Membership is the series' own list (what the server reads), in shelf order.
+        setSeries(
+          seriesRows.map((s) => {
+            const own = new Set(Array.isArray(s.bookIds) ? s.bookIds : []);
+            return {
+              id: s.id,
+              name: s.name,
+              bookIds: rows.filter((b) => own.has(b.id)).map((b) => b.id),
+            };
+          })
+        );
+        setLoaded(true);
         setRecentTitles(
           books
             .slice(0, 3)
@@ -101,6 +126,8 @@ export function useLibrary() {
     bookCount,
     recentTitles,
     books,
+    series,
+    loaded,
     focus,
     setFocus,
     toggleFocus,

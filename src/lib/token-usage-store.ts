@@ -114,7 +114,10 @@ let dirty = false;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getData(): UsageFile {
-  if (!memory) memory = loadFile();
+  // Each route bundle gets its own copy of this module, so a copy with nothing
+  // unsaved re-reads the file: otherwise the settings page shows what it loaded
+  // first and never sees calls recorded by the chat route.
+  if (!memory || !dirty) memory = loadFile();
   return memory;
 }
 

@@ -5,6 +5,7 @@ import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import {
   buildRecentConversation,
   buildSeriesContinuityHint,
+  countScopeQuestion,
   extractRetryQuestion,
   normalizeUserQuestion,
   resolveCountTarget,
@@ -26,7 +27,8 @@ const MAX_SCOPE_BOOKS = 20;
 
 export interface ChatSettings {
   ai: AISettings;
-  specialistModelId: string;
+  /** A fixed librarian model from Settings; undefined is auto (cheaper models first). */
+  specialistModelId?: string;
   orchestratorModelId: string;
   groundedMode: boolean;
   countMode: CountMode;
@@ -65,6 +67,8 @@ export interface ChatContext {
   sendSources(rows: ChatSource[]): void;
   /** SCOPE line: the books this answer is drawn from. Only the first call counts. */
   announceScope(books?: BookRef[], reason?: ScopeReason): void;
+  /** A second SCOPE line when more books are read than first announced (the last one wins). */
+  widenScope(books: BookRef[], reason: ScopeReason): void;
   /** Stop here if the request was cancelled. */
   checkpoint(): void;
 }
@@ -78,7 +82,7 @@ function readSettings(): ChatSettings {
   const companionMode = ai.companionMode !== false;
   return {
     ai,
-    specialistModelId: ai.modelRouting?.specialistModelId || DEFAULT_BEDROCK_MODEL_ID,
+    specialistModelId: ai.modelRouting?.specialistModelId?.trim() || undefined,
     orchestratorModelId: ai.modelRouting?.orchestratorModelId || DEFAULT_BEDROCK_MODEL_ID,
     groundedMode: Boolean(ai.groundedMode),
     countMode: ai.countMode || "whole_word",
@@ -128,8 +132,11 @@ export function buildChatContext(input: {
     });
   }
 
-  const scope = buildScope(bookId, bookTitle, question, input.bookIds);
   const mentionTarget = resolveCountTarget(question, messages);
+  // "and Joe?" counts where the count before it did ("…in Columbus Day?"), unless the
+  // follow-up says where itself.
+  const countQuestion = mentionTarget ? countScopeQuestion(question, messages.slice(0, -1)) : question;
+  const scope = buildScope(bookId, bookTitle, question, input.bookIds, countQuestion);
 
   let recentConversation = settings.ai.useConversationMemory === false ? "" : buildRecentConversation(messages);
   const ordered = seriesForContinuity(scope, bookId, mentionTarget ? scope.mentionSeries() : null);
@@ -187,6 +194,12 @@ export function buildChatContext(input: {
         .slice(0, MAX_SOURCES_PER_ANSWER)
         .map((r) => (r.bookId || !idByTitle.has(r.book) ? r : { ...r, bookId: idByTitle.get(r.book) }));
       writer.line("SOURCES", JSON.stringify(withIds));
+    },
+    widenScope(books, reason) {
+      scopeAnnounced = true;
+      const listed = books.slice(0, MAX_SCOPE_BOOKS).map((b) => ({ id: b.id, title: cleanBookDisplayTitle(b.title) }));
+      const more = books.length - listed.length;
+      writer.field("SCOPE", JSON.stringify({ books: listed, reason, ...(more > 0 ? { more } : {}) }));
     },
     announceScope(books = scope.books, reason = scope.reason) {
       if (scopeAnnounced) return;

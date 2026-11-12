@@ -2,6 +2,7 @@
  * Pure formatting helpers for the chat UI (no React, no DOM), so they can be
  * unit-tested and shared between hooks and components.
  */
+import { MAX_LIBRARY_SPECIALIST_BOOKS } from "@/lib/chat/constants";
 
 export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all" | "picked";
 
@@ -11,6 +12,8 @@ export interface ScopeInfo {
   reason: ScopeReason;
   /** Books in scope beyond the ones listed in `books`. */
   more?: number;
+  /** A name for the whole set (the series name), for the composer chip. */
+  label?: string;
 }
 
 /** What one request cost (`USAGE` stream line). */
@@ -21,6 +24,9 @@ export interface UsageInfo {
   embedCalls: number;
   ms: number;
 }
+
+/** Librarians read at most this many books per question (the server's specialist cap). */
+export const LIBRARIANS_READ_LIMIT = MAX_LIBRARY_SPECIALIST_BOOKS;
 
 const SCOPE_REASONS: ScopeReason[] = ["named", "focus", "series", "semantic", "all", "picked"];
 const SCOPE_TITLES_SHOWN = 3;
@@ -160,9 +166,11 @@ export function scopeReasonHint(reason: ScopeReason): string {
 
 /**
  * The composer's scope chip, before a question is sent: what it will be asked against.
- * "Asking Columbus Day" / "Asking 3 books: A, B, C" / "Asking the whole library".
+ * "Asking Columbus Day" / "Asking 3 books: A, B, C" / "Asking the whole library";
+ * a series goes by its name: "Asking Expeditionary Force".
  */
 export function formatAskingLine(scope: ScopeInfo): string {
+  if (scope.reason === "series" && scope.label?.trim()) return `Asking ${scope.label.trim()}`;
   const titles = scope.books.map((b) => cleanDisplayTitle(b.title));
   const total = titles.length + (scope.more ?? 0);
   if (scope.reason === "all" || total === 0) {
@@ -185,7 +193,10 @@ export function askingHint(scope: ScopeInfo): string {
     case "series":
       return "this series";
     case "picked":
-      return "picked by you";
+      // Counts and searches use every picked book; the librarians stop at the cap.
+      return scope.books.length + (scope.more ?? 0) > LIBRARIANS_READ_LIMIT
+        ? `picked by you · librarians read the first ${LIBRARIANS_READ_LIMIT}`
+        : "picked by you";
     case "all":
       return "the closest books are chosen when you ask";
     default:
@@ -235,4 +246,46 @@ export function formatLabelSummary(labels: Array<{ changed: number }>): string {
   const total = books.reduce((sum, l) => sum + l.changed, 0);
   if (!total) return "";
   return `${total} chapter label${total === 1 ? "" : "s"} in ${books.length} book${books.length === 1 ? "" : "s"}`;
+}
+
+/** The picker's footer note once more books are ticked than the librarians read. */
+export function pickedLimitNote(tickedCount: number): string {
+  if (tickedCount <= LIBRARIANS_READ_LIMIT) return "";
+  return `Counts and searches use all ${tickedCount}; the librarians read the first ${LIBRARIANS_READ_LIMIT}.`;
+}
+
+/** The welcome panel's starter questions. */
+export function welcomeSuggestions(
+  focus: "book" | "series" | null,
+  bookCount: number,
+  firstTitle?: string
+): string[] {
+  if (focus === "series") {
+    return [
+      "What's this series about?",
+      "Who matters most across these books?",
+      "How does the story change from the first book to the last?",
+      "Find a memorable quote",
+    ];
+  }
+  if (focus) {
+    return [
+      "What's this one about?",
+      "Who matters most here?",
+      "Any pop-culture references?",
+      "Find a memorable quote",
+    ];
+  }
+  if (bookCount > 0) {
+    const title = firstTitle?.trim();
+    return [
+      "Any pop culture references in the books?",
+      // Naming a book in the question scopes it, no picker needed.
+      ...(title ? [`In ${title}, what happens first?`] : []),
+      "Who shows up across the series?",
+      "Help me pick what to reread",
+      "How many times is Skippy mentioned in the first 7 books?",
+    ];
+  }
+  return ["What can you do?", "How do I add a book?"];
 }

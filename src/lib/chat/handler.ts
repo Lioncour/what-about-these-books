@@ -8,7 +8,7 @@ import { haveYouReadStep, libraryCountStep } from "@/lib/chat/steps/catalog-fact
 import { entityGraphStep, timelineConflictsStep } from "@/lib/chat/steps/knowledge";
 import { libraryCommandStep } from "@/lib/chat/steps/library-command";
 import { mainCharactersStep } from "@/lib/chat/steps/main-characters";
-import { exactCountStep, followUpCountStep } from "@/lib/chat/steps/mention-count";
+import { booksMentioningStep, exactCountStep } from "@/lib/chat/steps/mention-count";
 import { passageFindStep } from "@/lib/chat/steps/passage-find";
 import { quoteLookupStep } from "@/lib/chat/steps/quote-lookup";
 import { ragStep } from "@/lib/chat/steps/rag";
@@ -39,6 +39,7 @@ const announceSearch: ChatStep = (ctx) => {
 const PIPELINE: ChatStep[] = [
   libraryCommandStep,
   exactCountStep,
+  booksMentioningStep,
   announceRoute,
   passageFindStep,
   themeSurveyStep,
@@ -50,7 +51,6 @@ const PIPELINE: ChatStep[] = [
   whoIsStep,
   smallTalkStep,
   mainCharactersStep,
-  followUpCountStep,
   specialistsStep,
   quoteLookupStep,
   ragStep,
@@ -113,12 +113,12 @@ async function runPipeline(
 
 /**
  * Run one question through the real pipeline in-process and return its stream lines
- * (the eval). With `dryRun`, Claude calls are counted in USAGE but not made, so the
+ * (the eval). `messages` are the turns before the question (a follow-up case). With `dryRun`, Claude calls are counted in USAGE but not made, so the
  * route, the scope and every deterministic answer are real and nothing is spent on
  * generation; semantic search still embeds the question.
  */
 export async function runChatInProcess(
-  input: { bookId: string; bookTitle: string; bookIds?: string[]; question: string },
+  input: { bookId: string; bookTitle: string; bookIds?: string[]; messages?: ChatMessage[]; question: string },
   opts: { dryRun?: boolean; signal?: AbortSignal } = {}
 ): Promise<{ lines: string[]; route: ChatRoute | null }> {
   const lastUserMessage: ChatMessage = { role: "user", content: input.question };
@@ -129,7 +129,7 @@ export async function runChatInProcess(
       bookId: input.bookId,
       bookTitle: input.bookTitle,
       bookIds: input.bookIds,
-      messages: [lastUserMessage],
+      messages: [...(input.messages || []), lastUserMessage],
       lastUserMessage,
     },
     writer,

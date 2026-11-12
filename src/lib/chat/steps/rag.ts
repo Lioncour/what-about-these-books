@@ -3,6 +3,7 @@ import { logChatEvent } from "@/lib/chat-debug";
 import type { ChatContext } from "@/lib/chat/context";
 import { extractKeywords } from "@/lib/chat/intent";
 import { voicePreamble } from "@/lib/chat/response-formatting";
+import { resolveSpecialistModel } from "@/lib/chat/specialist-model";
 import type { ChatSource } from "@/lib/chat/types";
 
 /** Keyword snippets appended to the prompt after the semantic passages. */
@@ -82,7 +83,7 @@ export async function ragStep(ctx: ChatContext): Promise<boolean> {
     JSON.stringify({
       groundedMode,
       sourceCount: sources.length,
-      specialistModelId: settings.specialistModelId,
+      specialistModelId: resolveSpecialistModel(settings.specialistModelId),
       orchestratorModelId,
     })
   );

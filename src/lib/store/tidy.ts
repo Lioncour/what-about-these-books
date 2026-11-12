@@ -9,15 +9,13 @@
  * read for lookups. Page text is never touched, so the index stays valid.
  */
 import { createBackupSnapshot } from "@/lib/ops-store";
-import { renameBookInKnowledge } from "@/lib/knowledge-store";
-import { dropSpecialistCacheForBook, renameBookInQuality } from "@/lib/quality-store";
+import { dropSpecialistCacheForBook } from "@/lib/quality-store";
 import { isValidBookId } from "@/lib/runtime-config";
 import { cleanIngestTitle, titleFromFilename } from "@/lib/series-detection";
-import { loadCatalog, renameBooks, type BookEntry } from "./catalog";
-import { renameBookInChats } from "./chats";
+import { renameBooksEverywhere, titleKey } from "./book-edit";
+import { loadCatalog, type BookEntry } from "./catalog";
 import { relabelEpubPages } from "./labels";
 import { loadBookPages, saveBookPages, type BookPage } from "./pages";
-import { renameBookSpecialistProfile } from "./specialist-profiles";
 
 export interface TidyResult {
   /** Books whose display title changes. */
@@ -56,7 +54,7 @@ export function tidyLibrary(opts: { dryRun?: boolean } = {}): TidyResult {
   //    groups passages by title, so a clash would merge two books' evidence.
   const titles: TidyResult["titles"] = [];
   const taken = new Map<string, number>();
-  const key = (title: string) => title.replace(/\s+/g, " ").trim().toLowerCase();
+  const key = titleKey;
   for (const b of catalog.books) taken.set(key(b.title), (taken.get(key(b.title)) || 0) + 1);
   for (const book of books) {
     const to = tidyTitle(book, seriesNameOf(book));
@@ -94,23 +92,6 @@ export function tidyLibrary(opts: { dryRun?: boolean } = {}): TidyResult {
     // Cached specialist answers quote the old labels as locations.
     dropSpecialistCacheForBook(bookId);
   }
-  if (titles.length) {
-    const applied = renameBooks(newTitle);
-    for (const { id, to } of titles) {
-      if (!applied.has(id)) continue;
-      for (const [what, fn] of [
-        ["specialist profile", () => renameBookSpecialistProfile(id, to)],
-        ["knowledge", () => renameBookInKnowledge(id, to)],
-        ["quality", () => renameBookInQuality(id, to)],
-        ["chats", () => renameBookInChats(id, to)],
-      ] as Array<[string, () => void]>) {
-        try {
-          fn();
-        } catch (error) {
-          console.error(`tidyLibrary: could not update the title in ${what} for ${id}:`, error);
-        }
-      }
-    }
-  }
+  if (titles.length) renameBooksEverywhere(newTitle);
   return { titles, labels, dryRun };
 }

@@ -86,7 +86,7 @@ export function excerptProbes(excerpt: string): string[] {
 }
 
 /** The page holding the citation's words, with the match position in the collapsed text. */
-export function findExcerptInPages(
+function findExcerptInPages(
   pages: BookPage[],
   excerpt: string
 ): { index: number; start: number; length: number } | null {

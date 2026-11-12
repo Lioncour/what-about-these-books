@@ -28,6 +28,7 @@ export const PAGES: Record<string, Array<{ label: string; text: string }>> = {
   "book-4": [
     { label: "Page 1", text: "The harbor was quiet. Mara repaired nets by lamplight." },
     { label: "Page 2", text: "Mara quoted Shakespeare to the gulls." },
+    { label: "Page 3", text: "Mara’s chowder was made of smoked haddock, potatoes, leeks, and a splash of cream. The gulls wanted some." },
   ],
 };
 

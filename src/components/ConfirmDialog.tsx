@@ -4,13 +4,15 @@ import { useEffect, type ReactNode } from "react";
 
 /**
  * In-app confirmation (same look as AskDialog; no window.confirm). Without
- * `onConfirm` it is a plain notice with one Close button.
+ * `onConfirm` it is a plain notice with one Close button. Escape closes; Enter
+ * presses the focused button, which starts as Confirm (or Close on a notice).
  */
 export default function ConfirmDialog({
   open,
   title,
   children,
   confirmLabel = "OK",
+  tone,
   busy = false,
   onConfirm,
   onClose,
@@ -19,6 +21,8 @@ export default function ConfirmDialog({
   title: string;
   children: ReactNode;
   confirmLabel?: string;
+  /** "danger" for confirms that remove something: the confirm button says so in colour. */
+  tone?: "danger";
   /** The confirmed action is running: buttons are disabled. */
   busy?: boolean;
   onConfirm?: () => void;
@@ -50,6 +54,7 @@ export default function ConfirmDialog({
             type="button"
             onClick={onClose}
             disabled={busy}
+            autoFocus={!onConfirm}
             className="rounded-xl border border-border px-3 py-2 text-sm text-muted hover:text-foreground disabled:opacity-50"
           >
             {onConfirm ? "Cancel" : "Close"}
@@ -60,7 +65,11 @@ export default function ConfirmDialog({
               onClick={onConfirm}
               disabled={busy}
               autoFocus
-              className="rounded-xl bg-primary px-3.5 py-2 text-sm font-medium text-[#e8ddd0] hover:bg-primary-hover disabled:opacity-60"
+              className={`rounded-xl px-3.5 py-2 text-sm font-medium text-[#e8ddd0] disabled:opacity-60 ${
+                tone === "danger"
+                  ? "bg-danger hover:brightness-110 focus-visible:outline-danger"
+                  : "bg-primary hover:bg-primary-hover"
+              }`}
             >
               {confirmLabel}
             </button>

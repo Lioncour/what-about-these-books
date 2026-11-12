@@ -6,6 +6,9 @@ import {
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { logChatEvent } from "@/lib/chat-debug";
+import { isAbortError, isAwsAuthExpiredMessage, isNetworkErrorMessage } from "@/lib/bedrock-errors";
+
+export { isAbortError };
 
 export const AWS_REGION = process.env.AWS_REGION || "eu-central-1";
 export const DEFAULT_BEDROCK_MODEL_ID =
@@ -21,26 +24,6 @@ const CREDENTIALS_TTL_MS = 2 * 60 * 1000;
 let credentialsVerifiedAt = 0;
 let ensureCredentialsInFlight: Promise<AwsCredentialStatus> | null = null;
 let lastIdentityArn: string | null = null;
-
-/** Real expiry / missing-credential signatures only — not permissions, not network. */
-export function isAwsAuthExpiredMessage(message: string): boolean {
-  return /ExpiredToken(?:Exception)?|The SSO session associated with this profile has expired|SSO session .* has expired|Unable to locate credentials|TokenRefreshRequired|Could not load credentials|credentials have expired|NoCredentialProviders|NoCredentials|UnrecognizedClient(?:Exception)?|InvalidClientTokenId|UnauthorizedException|security token included in the request is (?:invalid|expired)|Token has expired|provided token has expired|Error loading SSO Token|loading SSO token/i.test(
-    message
-  );
-}
-
-/** Offline / DNS / connection failures — a browser login won't help here. */
-export function isNetworkErrorMessage(message: string): boolean {
-  return /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|getaddrinfo|Could not connect to the endpoint URL|Connect timeout|Connection was closed|socket hang up|network error|Failed to fetch|fetch failed|Max retries exceeded|SSL validation failed/i.test(
-    message
-  );
-}
-
-export function isAbortError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const err = error as { name?: string; message?: string };
-  return err.name === "AbortError" || /\baborted\b/i.test(err.message || "");
-}
 
 function awsProfileArgs(): string[] {
   const profile = process.env.AWS_PROFILE?.trim();
@@ -87,7 +70,7 @@ async function runAwsCli(
 let ssoLoginInFlight: Promise<boolean> | null = null;
 
 /** Run `aws sso login` once; concurrent callers share the same browser login. */
-export function runAwsSsoLogin(): Promise<boolean> {
+function runAwsSsoLogin(): Promise<boolean> {
   if (ssoLoginInFlight) return ssoLoginInFlight;
   const pending = runAwsSsoLoginOnce().finally(() => {
     if (ssoLoginInFlight === pending) ssoLoginInFlight = null;

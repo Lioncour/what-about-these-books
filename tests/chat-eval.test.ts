@@ -1,10 +1,12 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/book-store", () => ({ listBooks: () => [], listSeries: () => [] }));
 vi.mock("@/lib/chat/display-title", () => ({ cleanBookDisplayTitle: (t: string) => t }));
 vi.mock("@/lib/chat/handler", () => ({ runChatInProcess: vi.fn() }));
 
-import { checkChatCase, observeChat, type ChatEvalObserved } from "@/lib/chat-eval";
+import { caseHistory, checkChatCase, observeChat, type ChatEvalObserved } from "@/lib/chat-eval";
 import { DRY_RUN_TEXT } from "@/lib/chat/request-context";
 import { encodeStreamField } from "@/lib/chat/stream-protocol";
 
@@ -64,6 +66,51 @@ describe("observeChat", () => {
 
   it("keeps an error line", () => {
     expect(observeChat([line("ERROR", "Failed to generate response.")], null).error).toMatch(/Failed/);
+  });
+});
+
+describe("caseHistory", () => {
+  it("is empty for a single-turn case and passes turns through", () => {
+    expect(caseHistory({})).toEqual([]);
+    expect(
+      caseHistory({
+        history: [
+          { role: "user", content: "How many times is Skippy mentioned?" },
+          { role: "assistant", content: "766 times.", sources: [] } as never,
+        ],
+      })
+    ).toEqual([
+      { role: "user", content: "How many times is Skippy mentioned?" },
+      { role: "assistant", content: "766 times." },
+    ]);
+  });
+
+  it.each([
+    [{ history: "and Joe?" }],
+    [{ history: [{ role: "system", content: "x" }] }],
+    [{ history: [{ role: "user" }] }],
+    [{ history: [{ role: "user", content: "  " }] }],
+    [{ history: [null] }],
+  ])("refuses a malformed history %j", (testCase) => {
+    expect(() => caseHistory(testCase as never)).toThrow(/history/);
+  });
+});
+
+describe("the cases file", () => {
+  it("is well-formed: unique ids, a question, valid history and scope", () => {
+    const cases = JSON.parse(readFileSync(join(process.cwd(), "eval", "chat-cases.json"), "utf-8")) as Array<
+      Record<string, unknown>
+    >;
+    expect(new Set(cases.map((c) => c.id)).size).toBe(cases.length);
+    for (const c of cases) {
+      expect(typeof c.id, String(c.id)).toBe("string");
+      expect(typeof c.question, String(c.id)).toBe("string");
+      expect(c.expect, String(c.id)).toBeTypeOf("object");
+      expect(() => caseHistory(c as never), String(c.id)).not.toThrow();
+      expect([c.focus, c.series, c.books].filter(Boolean).length, String(c.id)).toBeLessThanOrEqual(1);
+    }
+    expect(cases.some((c) => Array.isArray(c.history))).toBe(true);
+    expect(cases.some((c) => typeof c.series === "string")).toBe(true);
   });
 });
 

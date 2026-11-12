@@ -8,6 +8,7 @@
  *   labels                chapter labels from EPUB headings
  *   settings              settings.json
  *   covers                covers/
+ *   book-edit             title/author edits and the one rename path
  *   specialist-profiles   specialists/
  *   chats                 chats/
  *   series                series edits, reconcile, duplicates
@@ -45,7 +46,9 @@ export {
 export type { AISettings } from "./store/settings";
 export { loadSettings, saveSettings } from "./store/settings";
 
-export { getCoverPath, saveCover } from "./store/covers";
+export { MAX_COVER_BYTES, getCoverPath, replaceCover, saveCover } from "./store/covers";
+
+export { BookEditError, updateBookMetadata } from "./store/book-edit";
 
 export type { BookSpecialistProfile } from "./store/specialist-profiles";
 export { loadBookSpecialistProfile, saveBookSpecialistProfile } from "./store/specialist-profiles";

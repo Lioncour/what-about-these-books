@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import type { Source } from "@/components/chat/MessageExtras";
 import { parseScope, parseUsage, type ScopeInfo } from "@/components/chat/format";
 import type { FocusBook, Message } from "@/components/chat/messages";
+import { scopeToRequest } from "@/components/chat/scope";
 import { decodeStreamLine } from "@/lib/chat/stream-protocol";
 
 function isAbortError(err: unknown): boolean {
@@ -73,9 +74,8 @@ export function useChatStream({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            bookId: focus?.id || "all",
-            bookTitle: focus?.title || "All Books",
-            ...(pickedIds.length >= 2 ? { bookIds: pickedIds } : {}),
+            // A series focus goes as bookId "series:<id>" with the series name.
+            ...scopeToRequest(focus, pickedIds),
             messages: history.map((m) => ({
               role: m.role,
               content: m.content,

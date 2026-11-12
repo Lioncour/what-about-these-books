@@ -6,9 +6,9 @@ import {
   fromSavedMessages,
   toSavedMessage,
   type ChatSummary,
-  type FocusBook,
   type Message,
 } from "@/components/chat/messages";
+import type { SavedScope } from "@/components/chat/scope";
 
 const ACTIVE_CHAT_KEY = "wab-active-chat-id";
 const SESSION_KEY = "wab-home-session";
@@ -22,22 +22,30 @@ function rememberActiveChat(id: string | null) {
   }
 }
 
-/** Saved chats ("Past notes"): list, load, autosave, delete, start afresh. */
+/**
+ * Saved chats ("Past notes"): list, load, autosave, delete, start afresh. Each chat
+ * is saved with the scope it was asked against (focus book, series or picked books)
+ * and opening it puts that scope back.
+ */
 export function useChatHistory({
   messages,
   setMessages,
   isLoading,
-  focus,
-  setFocus,
+  scope,
+  restoreScope,
 }: {
   messages: Message[];
   setMessages: Dispatch<SetStateAction<Message[]>>;
   isLoading: boolean;
-  focus: FocusBook | null;
-  setFocus: (focus: FocusBook | null) => void;
+  /** The current scope, as stored with the chat. */
+  scope: SavedScope;
+  /** Apply a loaded chat's stored scope (the raw saved chat; old chats have no picks). */
+  restoreScope: (savedChat: unknown) => void;
 }) {
   const [chatId, setChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  // The chat whose deletion is waiting for a yes in the dialog.
+  const [pendingDelete, setPendingDelete] = useState<ChatSummary | null>(null);
   // Id of a new chat between its first save being sent and `chatId` being set.
   const newIdRef = useRef<string | null>(null);
 
@@ -61,17 +69,13 @@ export function useChatHistory({
         newIdRef.current = null;
         setChatId(data.id);
         setMessages(fromSavedMessages(data.messages));
-        setFocus(
-          data.bookId && data.bookId !== "all"
-            ? { id: data.bookId, title: data.bookTitle }
-            : null
-        );
+        restoreScope(data);
         rememberActiveChat(data.id);
       } catch {
         /* ignore */
       }
     },
-    [setMessages, setFocus]
+    [setMessages, restoreScope]
   );
 
   // Remember which chat is active while talking (Past notes / Settings remount)
@@ -119,8 +123,7 @@ export function useChatHistory({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id,
-        bookId: focus?.id || "all",
-        bookTitle: focus?.title || "All Books",
+        ...scope,
         title: chatTitleFrom(messages),
         messages: messages.map(toSavedMessage),
         updatedAt: new Date().toISOString(),
@@ -135,7 +138,7 @@ export function useChatHistory({
         refresh();
       })
       .catch(() => {});
-  }, [messages, isLoading, chatId, focus, refresh]);
+  }, [messages, isLoading, chatId, scope, refresh]);
 
   /** Blank page: forget the active chat (the saved copy stays in Past notes). */
   const startNew = useCallback(() => {
@@ -145,23 +148,29 @@ export function useChatHistory({
     rememberActiveChat(null);
   }, [setMessages]);
 
-  const deleteChat = useCallback(
-    async (id: string) => {
-      if (!window.confirm("Delete this chat?")) return;
-      try {
-        await fetch("/api/chats", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatId: id }),
-        });
-        if (chatId === id) startNew();
-        refresh();
-      } catch {
-        /* ignore */
-      }
-    },
-    [chatId, refresh, startNew]
+  /** Ask (in the app's own dialog) before deleting. */
+  const requestDelete = useCallback(
+    (id: string) => setPendingDelete(chats.find((c) => c.id === id) || null),
+    [chats]
   );
+  const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
-  return { chatId, chats, loadChat, deleteChat, startNew };
+  const confirmDelete = useCallback(async () => {
+    const id = pendingDelete?.id;
+    setPendingDelete(null);
+    if (!id) return;
+    try {
+      await fetch("/api/chats", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: id }),
+      });
+      if (chatId === id) startNew();
+      refresh();
+    } catch {
+      /* ignore */
+    }
+  }, [pendingDelete, chatId, refresh, startNew]);
+
+  return { chatId, chats, loadChat, startNew, pendingDelete, requestDelete, confirmDelete, cancelDelete };
 }

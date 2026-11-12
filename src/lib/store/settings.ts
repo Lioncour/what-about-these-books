@@ -34,88 +34,57 @@ const DEFAULT_SETTINGS: AISettings = {
   modelRouting: {},
 };
 
+const ANSWER_MODES = ["Quick", "Evidence-heavy", "Exact count", "Compare books"] as const;
+const COUNT_MODES = ["whole_word", "phrase", "loose"] as const;
+
+const oneOf = <T extends string>(allowed: readonly T[], value: unknown): T | undefined =>
+  allowed.find((v) => v === value);
+const modelId = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+/**
+ * Settings from anything (the file on disk, a request body): unknown values fall back
+ * to the defaults. The one place that knows what a valid setting is.
+ */
+export function normalizeSettings(input: unknown): AISettings {
+  const raw = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const routing = (raw.modelRouting && typeof raw.modelRouting === "object" ? raw.modelRouting : {}) as Record<
+    string,
+    unknown
+  >;
+  const flag = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
+  return {
+    language: String(raw.language || DEFAULT_SETTINGS.language),
+    tone: String(raw.tone || DEFAULT_SETTINGS.tone),
+    customInstructions: String(raw.customInstructions || ""),
+    focusAreas: Array.isArray(raw.focusAreas) ? raw.focusAreas.map(String) : [],
+    groundedMode: Boolean(raw.groundedMode),
+    answerMode: oneOf(ANSWER_MODES, raw.answerMode) ?? DEFAULT_SETTINGS.answerMode,
+    useConversationMemory: flag(raw.useConversationMemory, true),
+    countMode: oneOf(COUNT_MODES, raw.countMode) ?? DEFAULT_SETTINGS.countMode,
+    companionMode: flag(raw.companionMode, true),
+    modelRouting: {
+      specialistModelId: modelId(routing.specialistModelId),
+      orchestratorModelId: modelId(routing.orchestratorModelId),
+      extractionModelId: modelId(routing.extractionModelId),
+    },
+  };
+}
+
 export function loadSettings(): AISettings {
   ensureStoreDirs();
-  if (!existsSync(SETTINGS_FILE)) return { ...DEFAULT_SETTINGS };
+  if (!existsSync(SETTINGS_FILE)) return normalizeSettings(null);
   try {
-    const parsed = JSON.parse(readFileSync(SETTINGS_FILE, "utf-8")) as Partial<AISettings>;
-    return {
-      language: parsed.language || DEFAULT_SETTINGS.language,
-      tone: parsed.tone || DEFAULT_SETTINGS.tone,
-      customInstructions: parsed.customInstructions || DEFAULT_SETTINGS.customInstructions,
-      focusAreas: Array.isArray(parsed.focusAreas) ? parsed.focusAreas.map(String) : [],
-      groundedMode: Boolean(parsed.groundedMode),
-      answerMode:
-        parsed.answerMode === "Quick" ||
-        parsed.answerMode === "Evidence-heavy" ||
-        parsed.answerMode === "Exact count" ||
-        parsed.answerMode === "Compare books"
-          ? parsed.answerMode
-          : DEFAULT_SETTINGS.answerMode,
-      useConversationMemory:
-        typeof parsed.useConversationMemory === "boolean"
-          ? parsed.useConversationMemory
-          : DEFAULT_SETTINGS.useConversationMemory,
-      countMode:
-        parsed.countMode === "whole_word" || parsed.countMode === "phrase" || parsed.countMode === "loose"
-          ? parsed.countMode
-          : DEFAULT_SETTINGS.countMode,
-      companionMode:
-        typeof parsed.companionMode === "boolean"
-          ? parsed.companionMode
-          : DEFAULT_SETTINGS.companionMode,
-      modelRouting:
-        parsed.modelRouting && typeof parsed.modelRouting === "object"
-          ? {
-              specialistModelId: parsed.modelRouting.specialistModelId
-                ? String(parsed.modelRouting.specialistModelId)
-                : undefined,
-              orchestratorModelId: parsed.modelRouting.orchestratorModelId
-                ? String(parsed.modelRouting.orchestratorModelId)
-                : undefined,
-              extractionModelId: parsed.modelRouting.extractionModelId
-                ? String(parsed.modelRouting.extractionModelId)
-                : undefined,
-            }
-          : {},
-    };
+    return normalizeSettings(JSON.parse(readFileSync(SETTINGS_FILE, "utf-8")));
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(null);
   }
 }
 
-export function saveSettings(settings: AISettings): void {
+/** Saves what `normalizeSettings` makes of the input and returns it. */
+export function saveSettings(settings: unknown): AISettings {
   ensureStoreDirs();
-  const normalized: AISettings = {
-    language: settings.language || DEFAULT_SETTINGS.language,
-    tone: settings.tone || DEFAULT_SETTINGS.tone,
-    customInstructions: settings.customInstructions || "",
-    focusAreas: Array.isArray(settings.focusAreas) ? settings.focusAreas.map(String) : [],
-    groundedMode: Boolean(settings.groundedMode),
-    answerMode:
-      settings.answerMode === "Quick" ||
-      settings.answerMode === "Evidence-heavy" ||
-      settings.answerMode === "Exact count" ||
-      settings.answerMode === "Compare books"
-        ? settings.answerMode
-        : DEFAULT_SETTINGS.answerMode,
-    useConversationMemory:
-      typeof settings.useConversationMemory === "boolean"
-        ? settings.useConversationMemory
-        : DEFAULT_SETTINGS.useConversationMemory,
-    countMode:
-      settings.countMode === "whole_word" || settings.countMode === "phrase" || settings.countMode === "loose"
-        ? settings.countMode
-        : DEFAULT_SETTINGS.countMode,
-    companionMode:
-      typeof settings.companionMode === "boolean"
-        ? settings.companionMode
-        : DEFAULT_SETTINGS.companionMode,
-    modelRouting: {
-      specialistModelId: settings.modelRouting?.specialistModelId || undefined,
-      orchestratorModelId: settings.modelRouting?.orchestratorModelId || undefined,
-      extractionModelId: settings.modelRouting?.extractionModelId || undefined,
-    },
-  };
+  const normalized = normalizeSettings(settings);
   writeJsonAtomic(SETTINGS_FILE, normalized);
+  return normalized;
 }

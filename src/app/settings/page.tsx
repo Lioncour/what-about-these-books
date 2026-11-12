@@ -8,37 +8,46 @@ import HowITalkSection from "@/components/settings/HowITalkSection";
 import LibraryToolsSection from "@/components/settings/LibraryToolsSection";
 import PersonalitySection from "@/components/settings/PersonalitySection";
 import TokenUsageSection from "@/components/settings/TokenUsageSection";
-import { DEFAULT_SETTINGS, type AISettings } from "@/components/settings/types";
+import { DEFAULT_SETTINGS, type AISettings, type ModelRoutingStatus } from "@/components/settings/types";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AISettings>(DEFAULT_SETTINGS);
+  const [routing, setRouting] = useState<ModelRoutingStatus | null>(null);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((data) => {
+      .then(({ modelRoutingStatus, ...data }) => {
         setSettings({
           ...DEFAULT_SETTINGS,
           ...data,
           companionMode: data.companionMode !== false,
           modelRouting: data.modelRouting || {},
         });
+        setRouting(modelRoutingStatus || null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  const save = useCallback(async () => {
-    await fetch("/api/settings", {
+  const post = useCallback(async (body: unknown) => {
+    const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(body),
     });
+    const data = (await res.json().catch(() => null)) as { modelRoutingStatus?: ModelRoutingStatus } | null;
+    if (res.ok && data?.modelRoutingStatus) setRouting(data.modelRoutingStatus);
+    return res.ok;
+  }, []);
+
+  const save = useCallback(async () => {
+    if (!(await post(settings))) return;
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
-  }, [settings]);
+  }, [post, settings]);
 
   if (loading) {
     return (
@@ -68,7 +77,12 @@ export default function SettingsPage() {
         <HowITalkSection settings={settings} update={setSettings} />
         <TokenUsageSection />
         <PersonalitySection settings={settings} update={setSettings} />
-        <AdvancedSection settings={settings} update={setSettings} />
+        <AdvancedSection
+          settings={settings}
+          update={setSettings}
+          routing={routing}
+          onRecheck={() => post({ recheckModels: true })}
+        />
         <LibraryToolsSection />
 
         <div className="flex justify-end gap-2 pb-10">

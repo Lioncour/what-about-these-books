@@ -161,6 +161,12 @@ That’s more Bedrock calls, but answers stay grounded per book and disagreement
 Caps / selection: `specialist-limits.ts`, `constants.ts`.  
 Cache: `quality-store.ts` (so repeat questions aren’t full price every time).
 
+An open library question doesn't ask all six selected books at once: the three closest go first (`FIRST_WAVE_SPECIALIST_BOOKS`), and `steps/specialists.ts` reads the rest only when those come back thin. Breadth questions, a series in focus, named and hand-picked books skip this.
+
+### Which model answers
+
+The librarians do extraction to JSON and are most of the tokens, so they run on a cheaper model than the final answer. `src/lib/model-routing.ts` (pure: region prefix, candidates, error classification) and `chat/specialist-model.ts` (the call-and-fallback loop) try Haiku 4.5, then Sonnet 4.5, then the main model; what the account can't call is remembered in `ops/model-routing.json` for a week. A model fixed in Settings → Advanced is used as is. The orchestrator, RAG and single-call answers use the main model. At most `MAX_SPECIALIST_CALLS_PER_REQUEST` (8) librarian calls are made per question.
+
 ### Why “friend voice”?
 
 Product goal: not a sterile research bot — a **friend who knows the books extremely well**.
@@ -206,8 +212,10 @@ Re-index without re-upload: `reindex-manager.ts` + `/api/reindex`.
 | `chat/MessageList.tsx`, `Composer.tsx`, `WelcomePanel.tsx`, `ChatHeader.tsx` | The conversation column |
 | `library/TidyTitles.tsx` | Manage → “Tidy titles & chapters” (dry run, confirm, backup, apply) |
 | `settings/*Section.tsx` | Settings page sections |
-| `BookLibrary.tsx` | Covers, series, manage/duplicates |
-| `UploadArea.tsx` | Drag/drop queue + “Ask about this book” |
+| `BookLibrary.tsx` + `hooks/useBookShelf.ts` + `library/*` | Shelves: `BookCard`, `SeriesHeader`, `ManageBar`, `EditBookDialog`, `LibraryDialogs` (every confirm/prompt is in-app) |
+| `UploadArea.tsx` + `hooks/useUploadQueue.ts` + `upload/*` | Drag/drop queue + “Ask about this book” |
+| `chat/ScopeChip.tsx` + `hooks/useAskScope.ts`, `useScopePreview.ts`, `chat/scope.ts` | What the next question is asked against: library, focus book, series, picked books; saved with the chat |
+| `ConfirmDialog.tsx` | Confirm / notice dialog (`tone="danger"` for destructive actions) |
 | `ChatMarkdown.tsx` | Assistant Markdown |
 | `chat/MessageExtras.tsx` | Sources, scope line, usage line |
 | `chat/AskDialog.tsx` | In-app prompts (no ugly `window.prompt`) |

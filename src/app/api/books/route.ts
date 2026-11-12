@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listBooks, deleteBook, listDuplicateBookGroups, mergeDuplicateBooks, isValidBookId } from "@/lib/book-store";
+import {
+  BookEditError,
+  deleteBook,
+  isValidBookId,
+  listBooks,
+  listDuplicateBookGroups,
+  mergeDuplicateBooks,
+  updateBookMetadata,
+} from "@/lib/book-store";
 import { badRequest, errorResponse, publicModeBlocked } from "@/lib/api-guard";
 
 export async function GET(request: NextRequest) {
@@ -34,6 +42,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     return errorResponse(error, "Failed to update books");
+  }
+}
+
+/**
+ * Edit a book's display title and/or author: `{ "bookId", "title"?, "author"? }` →
+ * `{ "book": <catalog entry> }`. 400 for a bad id or value, 409 when another book
+ * already has that title. An empty author clears it.
+ */
+export async function PATCH(request: NextRequest) {
+  const blocked = publicModeBlocked("Editing books");
+  if (blocked) return blocked;
+  try {
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") return badRequest("Expected a JSON object");
+    const book = updateBookMetadata(body.bookId, { title: body.title, author: body.author });
+    return NextResponse.json({ book });
+  } catch (error) {
+    if (error instanceof BookEditError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    return errorResponse(error, "Failed to update the book");
   }
 }
 

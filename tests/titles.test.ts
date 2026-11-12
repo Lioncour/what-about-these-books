@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cleanIngestTitle } from "../src/lib/series-detection";
-import { extractWhoIsTarget, shouldBypassSpecialists } from "../src/lib/chat/intent";
+import { extractBooksMentioningTarget, extractWhoIsTarget, shouldBypassSpecialists } from "../src/lib/chat/intent";
 
 describe("cleanIngestTitle", () => {
   it("prefers the book's metadata title", () => {
@@ -89,5 +89,32 @@ describe("intent heuristics", () => {
     expect(shouldBypassSpecialists("Who are they fighting?")).toBe(false);
     expect(shouldBypassSpecialists("Does Joe survive?")).toBe(false);
     expect(shouldBypassSpecialists("hey there")).toBe(true);
+  });
+});
+
+describe("extractBooksMentioningTarget", () => {
+  it.each([
+    ["Which books in my library mention Mars?", "Mars"],
+    // A capitalised name keeps its article, as in the counts.
+    ["which books mention the Elders?", "the Elders"],
+    ["which books mention the planet?", "planet"],
+    ["Which books mention the Elders?".replace("the Elders", "The Elders"), "The Elders"],
+    ["Which of the books reference Star Trek", "Star Trek"],
+    ["In which books is Skippy mentioned?", "Skippy"],
+    ["Does any book mention a beer can?", "beer can"],
+    ["What books does Count Chocula appear in?", "Count Chocula"],
+    ["Which books mention the word \"monkey\"?", "monkey"],
+  ])("%s → %s", (question, target) => {
+    expect(extractBooksMentioningTarget(question)).toBe(target);
+  });
+
+  it.each([
+    "Which books talk about grief?",
+    "Which book should I reread?",
+    "Which books mention the time Joe got stuck in the airlock with Skippy?",
+    "How many times is Skippy mentioned?",
+    "Which books mention it?",
+  ])("leaves %s to the other routes", (question) => {
+    expect(extractBooksMentioningTarget(question)).toBeNull();
   });
 });

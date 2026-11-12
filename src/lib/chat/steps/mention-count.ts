@@ -29,7 +29,10 @@ function answerCount(ctx: ChatContext, target: string): boolean {
   return true;
 }
 
-/** "How many times is X mentioned?" — runs first, before anything is embedded. */
+/**
+ * "How many times is X mentioned?", and "and Joe?" right after one — runs first, before
+ * anything is embedded.
+ */
 export function exactCountStep(ctx: ChatContext): boolean {
   if (ctx.route.kind !== "mention_count") return false;
   if (ctx.mentionTarget) return answerCount(ctx, ctx.mentionTarget);
@@ -41,7 +44,44 @@ export function exactCountStep(ctx: ChatContext): boolean {
   return true;
 }
 
-/** "and Joe?" after a count: routed as an open question, but it has a count target. */
-export function followUpCountStep(ctx: ChatContext): boolean {
-  return ctx.mentionTarget ? answerCount(ctx, ctx.mentionTarget) : false;
+/** "Which books mention X?" — the books, with exact counts, straight from the stored text. */
+export function booksMentioningStep(ctx: ChatContext): boolean {
+  if (ctx.route.kind !== "books_mentioning" || !ctx.route.target) return false;
+  const target = ctx.route.target;
+  const { countMode } = ctx.settings;
+  const count = ctx.scope.countMentions(target, countMode);
+  ctx.status(`Checking which books mention "${target}" ${count.where}...`);
+  ctx.announceScope(count.books, count.reason);
+
+  const searched = count.books.length;
+  const method = `exact text search, **${countMode.replace(/_/g, " ")}** match, not an AI estimate`;
+  const lines: string[] = [];
+  if (!count.byBook.length) {
+    lines.push(
+      `No — **${target}** isn't mentioned ${count.scopeLabel} (${method}). I checked ${searched} book${searched === 1 ? "" : "s"}.`
+    );
+  } else {
+    const hits = count.byBook.length;
+    lines.push(
+      `**${target}** is mentioned in **${hits} of ${searched}** book${searched === 1 ? "" : "s"} ${count.scopeLabel} (${method}):`,
+      ""
+    );
+    for (const [title, n] of count.byBook.slice(0, 40)) {
+      lines.push(`- **${title}**: ${n.toLocaleString()} time${n === 1 ? "" : "s"}`);
+    }
+    const hitTitles = new Set(count.byBook.map(([title]) => title));
+    const without = count.books.map((b) => b.title).filter((title) => !hitTitles.has(title));
+    if (without.length && without.length <= 20) {
+      lines.push("", `Not mentioned in: ${without.join(", ")}.`);
+    }
+  }
+  logChatEvent("books_mentioning_answered", {
+    scope: count.kind,
+    target,
+    books: searched,
+    hits: count.byBook.length,
+  });
+  ctx.emitAnswer(lines.join("\n"), { reason: "books_mentioning", scope: count.kind });
+  ctx.sendSources(count.sources);
+  return true;
 }

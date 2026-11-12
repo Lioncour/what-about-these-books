@@ -268,6 +268,28 @@ export function shouldUseExactMentionCount(input: string, answerMode?: string): 
   return false;
 }
 
+const RECIPE_WORD_RE = /\b(?:recipes?|receipt|reciept|recipie|recipt)\b/i;
+/** "ingredients of X", "how do you make X": a recipe question only if the text really lists something. */
+const SOFT_RECIPE_RE =
+  /\bingredients?\b|\bhow\s+(?:do\s+(?:you|i|we)|to|would\s+(?:you|i))\s+(?:make|cook|prepare|bake|brew)\b(?!\s+(?:sense|sure|it\b|up\b|of\b|do\b|that\b|this\s+work))/i;
+
+/** "X recipe", "how do you make X", "what are the ingredients of X". */
+export function looksLikeRecipeQuestion(input: string): boolean {
+  const text = normalizeUserQuestion(input);
+  return RECIPE_WORD_RE.test(text) || SOFT_RECIPE_RE.test(text);
+}
+
+/**
+ * A recipe question that never says "recipe" ("how do you make a wormhole?", "the key
+ * ingredient of his plan"): worth a recipe card only when a passage lists items;
+ * otherwise it is an ordinary question for the librarians.
+ */
+export function isSoftRecipeQuestion(input: string): boolean {
+  const text = normalizeUserQuestion(input);
+  if (RECIPE_WORD_RE.test(text) || !SOFT_RECIPE_RE.test(text)) return false;
+  return !/\b(?:find|locate|where is)\b.*\b(?:quote|passage|scene)\b/i.test(text);
+}
+
 /** Find a specific recipe/quote/passage — not broad theme questions like "any pop culture?". */
 export function looksLikePassageFindQuestion(input: string): boolean {
   const text = normalizeUserQuestion(input).toLowerCase();
@@ -278,17 +300,13 @@ export function looksLikePassageFindQuestion(input: string): boolean {
     /\b(any (?:references?|mentions?|examples?)|references? to|pop culture|themes?|tropes?|examples of)\b/i.test(
       text
     ) &&
-    !/\b(recipe|receipt|reciept|cheeseburger|hamburger|find (?:this|the|that) (?:quote|passage))\b/i.test(
-      text
-    )
+    !RECIPE_WORD_RE.test(text) &&
+    !/\bfind (?:this|the|that) (?:quote|passage)\b/i.test(text)
   ) {
     return false;
   }
 
-  const wantsRecipe =
-    /\b(recipe|receipt|reciept|recipie|cheeseburger|hamburger|ingredient)\b/i.test(text) &&
-    /\b(find|is there|there is|where|locate|show|can you find)\b/i.test(text);
-  if (wantsRecipe) return true;
+  if (looksLikeRecipeQuestion(text)) return true;
 
   if (
     looksLikeQuoteLookup(text) ||
@@ -300,7 +318,7 @@ export function looksLikePassageFindQuestion(input: string): boolean {
   // Concrete "find that for me" after naming a thing (recipe path already covered)
   if (
     /\b(can you find|find (?:me )?(?:the|that|this)|help me find|look(?:ing)? up)\b/i.test(text) &&
-    /\b(recipe|receipt|quote|passage|scene|cheeseburger|hamburger)\b/i.test(text)
+    /\b(quote|passage|scene)\b/i.test(text)
   ) {
     return true;
   }
@@ -331,17 +349,8 @@ export function extractPassageSearchTerms(input: string): string[] {
     if (v.length >= 3) terms.add(v);
   };
 
-  // Typo / synonym expansions
-  if (/\bcheeseburger|cheese\s*burger/i.test(text)) {
-    add("cheeseburger");
-    add("cheese burger");
-    add("burger");
-  }
-  if (/\bhamburger/i.test(text)) {
-    add("hamburger");
-    add("burger");
-  }
-  if (/\brecipe|receipt|reciept|recipie|recipt/i.test(text)) {
+  // Typo expansion
+  if (RECIPE_WORD_RE.test(text)) {
     add("recipe");
     add("recipes");
   }
@@ -440,6 +449,19 @@ export function resolveCountTarget(input: string, messages: ChatMessage[]): stri
   const followup = extractCountFollowupCandidate(input);
   if (followup && isCountFollowupContext(messages)) return followup;
   return null;
+}
+
+/**
+ * The question whose wording says where a count runs. A count question speaks for
+ * itself; a short follow-up ("and Joe?") inherits the last count question before it.
+ */
+export function countScopeQuestion(question: string, earlier: ChatMessage[]): string {
+  if (looksLikeMentionCountQuestion(question)) return question;
+  for (let i = earlier.length - 1; i >= 0; i--) {
+    const m = earlier[i];
+    if (m.role === "user" && looksLikeMentionCountQuestion(m.content)) return normalizeUserQuestion(m.content);
+  }
+  return question;
 }
 
 /** "Who are the main characters / protagonists?" — not "Is Skippy the main character?". */
@@ -554,4 +576,35 @@ export function buildSeriesContinuityHint(opts: {
     " Prefer answering with awareness of what has happened by this point in the series;" +
     " note book numbers when comparing events across volumes; avoid spoiling later books unless asked."
   );
+}
+
+const BOOKS_MENTION_VERB = "(?:mention(?:s|ed)?|reference(?:s|d)?|name(?:s|d)?)";
+
+/**
+ * "Which books mention Mars?", "In which books is Skippy mentioned?", "Does any book
+ * reference the Elders?" → the thing looked for. These are exact text lookups per book,
+ * not reading questions. Thematic wording ("talk about", "deal with") and long clauses
+ * are left to the librarians.
+ */
+export function extractBooksMentioningTarget(input: string): string | null {
+  const text = normalizeUserQuestion(input).replace(/\s+/g, " ").trim();
+  const patterns = [
+    new RegExp(`\\b(?:which|what)\\s+(?:of\\s+(?:the|my|these)\\s+)?books?\\b[^?]*?\\b${BOOKS_MENTION_VERB}\\s+(.+?)\\s*\\??$`, "i"),
+    new RegExp(`\\b(?:do|does)\\s+any\\s+(?:of\\s+(?:the|my|these)\\s+)?books?\\s+${BOOKS_MENTION_VERB}\\s+(.+?)\\s*\\??$`, "i"),
+    /\bin\s+(?:which|what)\s+books?\s+(?:is|are|was|were|does|do)\s+(.+?)\s+(?:mentioned|referenced|named|appear|appears|show up|shows up)\b/i,
+    /\b(?:which|what)\s+books?\s+(?:is|are|does|do)\s+(.+?)\s+(?:mentioned|referenced|named|appear|appears|show up|shows up)\s+in\b/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m?.[1]) continue;
+    let target = m[1].replace(/^["“”']+|["“”'.,!]+$/g, "").trim();
+    // "the Elders" keeps its article (a name); "the word grenade" / "the planet" do not.
+    target = target.replace(/^(?:the\s+)?(?:word|name|term|phrase)\s+/i, "");
+    if (/^the\s+[a-z]/.test(target)) target = target.replace(/^the\s+/, "");
+    target = target.replace(/^(?:a|an)\s+/i, "").replace(/^["“”']+|["“”']+$/g, "").trim();
+    const words = target.split(/\s+/).filter(Boolean);
+    if (!target || words.length > 4 || isPronounTarget(target)) return null;
+    return target;
+  }
+  return null;
 }

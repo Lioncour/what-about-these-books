@@ -123,7 +123,7 @@ export function findNamedBooksInQuestion(
 }
 
 /** The question clearly wants more than one book (compare, across, all, both …). */
-function wantsMultipleBooks(question: string): boolean {
+export function wantsMultipleBooks(question: string): boolean {
   return /\b(compare|compared|comparison|versus|vs\.?|across|all (?:the )?books|every book|both books|each book|other books|the series|whole series|entire series|throughout the series|library)\b/i.test(
     question
   );

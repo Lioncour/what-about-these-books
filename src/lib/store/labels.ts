@@ -287,7 +287,7 @@ export function parseChapterHeading(text: string, opts: { whole?: boolean } = {}
   return null;
 }
 
-export function formatChapterLabel(heading: ChapterHeading): string {
+function formatChapterLabel(heading: ChapterHeading): string {
   const base = heading.number != null ? `${heading.word} ${heading.number}` : heading.word;
   return heading.title ? `${base} · ${heading.title}` : base;
 }

@@ -42,7 +42,7 @@ export type ScopeKind = "all" | "series" | "book";
 export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all" | "picked";
 
 /** Most books a reader may pick for one question. */
-export const MAX_PICKED_BOOKS = 40;
+const MAX_PICKED_BOOKS = 40;
 
 export interface ScopedPassage {
   bookTitle: string;
@@ -132,7 +132,7 @@ function toSelection(sel: LibrarySpecialistSelection, fallback: ScopeReason): Sp
  * Books the reader picked by hand, as catalog entries. Unknown ids are dropped; fewer
  * than two is not a picked scope (one book is plain book focus).
  */
-export function resolvePickedBooks(ids: unknown): BookRef[] {
+function resolvePickedBooks(ids: unknown): BookRef[] {
   if (!Array.isArray(ids)) return [];
   const seen = new Set<string>();
   const books: BookRef[] = [];
@@ -255,7 +255,18 @@ export function previewScope(input: {
   return { books: [], reason: "all", ...(scope.books.length ? { more: scope.books.length } : {}) };
 }
 
-export function buildScope(bookId: string, bookTitle: string, question: string, pickedIds?: unknown): Scope {
+/**
+ * `countQuestion`: the question whose wording decides where an exact count runs (a named
+ * book, "the first 7 books", a named series). It differs from `question` only for a
+ * follow-up like "and Joe?", which counts where the count question before it did.
+ */
+export function buildScope(
+  bookId: string,
+  bookTitle: string,
+  question: string,
+  pickedIds?: unknown,
+  countQuestion: string = question
+): Scope {
   const pickedBooks = resolvePickedBooks(pickedIds);
   if (pickedBooks.length >= 2) return pickedScope(pickedBooks, question);
   if (pickedBooks.length === 1) {
@@ -270,12 +281,12 @@ export function buildScope(bookId: string, bookTitle: string, question: string, 
 
   let mentionSeries: SeriesEntry | null | undefined;
   const resolveMentionSeries = () => {
-    if (mentionSeries === undefined) mentionSeries = resolveSeriesForMentionCount(question, bookId);
+    if (mentionSeries === undefined) mentionSeries = resolveSeriesForMentionCount(countQuestion, bookId);
     return mentionSeries;
   };
 
   const countInSeries = (counted: SeriesEntry, target: string, mode: CountMode): MentionCount => {
-    const bookCountScope = extractBookCountScope(question);
+    const bookCountScope = extractBookCountScope(countQuestion);
     const result = countMentionsInOrderedBooks({
       seriesId: counted.id,
       keyword: target,
@@ -311,7 +322,7 @@ export function buildScope(bookId: string, bookTitle: string, question: string, 
 
   /** "…in Columbus Day?" counts only the books named in the question; otherwise the library. */
   const countInLibrary = (target: string, mode: CountMode): MentionCount => {
-    const named = findNamedBooksInQuestion(question);
+    const named = findNamedBooksInQuestion(countQuestion);
     const namedIds = new Set(named.map((b) => b.id));
     const scopeLabel = named.length
       ? `in ${named.map((b) => cleanBookDisplayTitle(b.title)).join(", ")}`

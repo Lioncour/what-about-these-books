@@ -12,6 +12,7 @@ export default function ChatHeader({
   onTogglePastNotes,
   onNewChat,
 }: {
+  /** The focus book, or a series (id "series:<id>", title = its name). */
   focus: FocusBook | null;
   /** Books picked by hand for the next question (two or more). */
   pickedCount?: number;
@@ -32,6 +33,11 @@ export default function ChatHeader({
             <p className="truncate font-display text-lg font-semibold leading-snug sm:text-xl">
               {focus.title}
             </p>
+            {focus.id.startsWith("series:") && (
+              <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">
+                Series
+              </span>
+            )}
             <button
               type="button"
               onClick={onClearFocus}
