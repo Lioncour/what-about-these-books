@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog } = require("electron");
+const { app, BrowserWindow, Menu, dialog, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -31,15 +31,44 @@ function stderrSummary() {
   return stderrTail.length ? `\n\n${stderrTail.join("\n")}` : "";
 }
 
-function isPortFree(port) {
+/** True when something accepts connections on host:port. */
+function isAnswering(port, host) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host });
+    socket.setTimeout(800);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", () => resolve(false));
+  });
+}
+
+function canBind(port, host) {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.unref();
     server.once("error", () => resolve(false));
-    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
+    server.listen({ port, host, exclusive: true }, () => {
       server.close(() => resolve(true));
     });
   });
+}
+
+/**
+ * A port is free only if nobody answers on it and we can bind it. Binding 127.0.0.1
+ * alone is not enough: Windows lets us bind a specific address while another server
+ * (a `next dev` left running, say) listens on all interfaces, and the window would
+ * then show whichever of the two answers.
+ */
+async function isPortFree(port) {
+  if (await isAnswering(port, "127.0.0.1")) return false;
+  if (await isAnswering(port, "::1")) return false;
+  return canBind(port, "127.0.0.1");
 }
 
 /** Return the preferred port if free, else the first free port in PORT_RANGE. */
@@ -84,6 +113,9 @@ function getStandaloneDir() {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, "standalone");
   }
+  // The smoke test runs the standalone build from a copy outside the project, where
+  // it can't borrow modules from the project's node_modules.
+  if (process.env.WABT_STANDALONE_DIR) return process.env.WABT_STANDALONE_DIR;
   return path.join(getAppRoot(), ".next", "standalone");
 }
 
@@ -163,13 +195,24 @@ function waitForServer(url, timeout = 180000) {
         );
         return;
       }
-      const req = http.get(url, (res) => {
-        res.resume();
-        if (res.statusCode === 200 || res.statusCode === 304) {
-          resolve();
-        } else {
-          retry();
-        }
+      // Ask for something only our server answers this way, so a stranger on the
+      // port can never be taken for the app.
+      const req = http.get(`${url}/api/config`, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => {
+          if (body.length < 4096) body += d;
+        });
+        res.on("end", () => {
+          let ours = false;
+          try {
+            ours = res.statusCode === 200 && typeof JSON.parse(body).publicMode === "boolean";
+          } catch {
+            ours = false;
+          }
+          if (ours) resolve();
+          else retry();
+        });
       });
       req.setTimeout(5000, () => req.destroy(new Error("timeout")));
       req.on("error", retry);
@@ -291,11 +334,22 @@ function createWindow() {
     show: false,
   });
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // The window only ever shows the app. A web link in an answer opens in the system
+  // browser instead of doing nothing; anything that isn't http(s) is dropped.
+  const openOutside = (url) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+  };
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: "deny" };
+  });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    const allowed = url.startsWith(appUrl) || url.startsWith(`http://localhost:${PORT}`);
-    if (!allowed) event.preventDefault();
+    const allowed = url.startsWith(`${appUrl}/`) || url === appUrl || url.startsWith(`http://localhost:${PORT}/`);
+    if (!allowed) {
+      event.preventDefault();
+      openOutside(url);
+    }
   });
 
   mainWindow.loadURL(appUrl);
@@ -363,12 +417,15 @@ async function startApp() {
   await waitForServer(`http://127.0.0.1:${PORT}`);
   serverReady = true;
 
-  // Warm AWS SSO on startup (opens browser only if session expired)
-  http
-    .get(`http://127.0.0.1:${PORT}/api/aws-status`, (res) => {
-      res.resume();
-    })
-    .on("error", () => {});
+  // Warm AWS SSO on startup (opens browser only if session expired). Not in a smoke
+  // run: a test must never open a login page.
+  if (!process.env.WABT_SMOKE) {
+    http
+      .get(`http://127.0.0.1:${PORT}/api/aws-status`, (res) => {
+        res.resume();
+      })
+      .on("error", () => {});
+  }
 
   createWindow();
 }

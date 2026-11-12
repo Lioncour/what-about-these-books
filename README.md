@@ -73,6 +73,7 @@ On first launch, edit `%USERPROFILE%\.whataboutthisbook\.env` (created automatic
 | `npm run eval:harness` | Retrieval quality eval (`eval/gold-questions.json`) |
 | `npm run eval:chat` | Chat eval (`eval/chat-cases.json`): routes, books read, cost; add `-- --live` for real answers |
 | `npm test` | Unit tests (vitest) |
+| `npm run smoke` | Launch the desktop app and check port, window, API and quit (`-- --prod`, `-- --packaged`, `-- --busy-port`) |
 
 ## Tech Stack
 

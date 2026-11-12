@@ -19,3 +19,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # Launches the desktop app on the standalone build, from a copy outside the repo so
+      # it can't borrow modules from node_modules: port pick, window, API, clean quit.
+      - name: Desktop smoke test
+        run: xvfb-run -a node scripts/electron-smoke.mjs --prod

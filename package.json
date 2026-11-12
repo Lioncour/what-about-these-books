@@ -15,7 +15,8 @@
     "dist": "npm run build && electron-builder --win",
     "dist:setup": "node scripts/setup-user-config.mjs && powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
     "electron:start": "cross-env NODE_ENV=production electron .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke": "node scripts/electron-smoke.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1038.0",
@@ -58,6 +59,14 @@
         "from": ".next/standalone",
         "to": "standalone",
         "filter": [
+          "**/*",
+          ".next/**/*"
+        ]
+      },
+      {
+        "from": ".next/standalone/node_modules",
+        "to": "standalone/node_modules",
+        "filter": [
           "**/*"
         ]
       }
@@ -88,5 +97,7 @@
     "mac": {
       "icon": "public/icon.png"
     }
-  }
+  },
+  "description": "A reading room for the books you keep: ask questions about your own library.",
+  "author": "Lioncour"
 }

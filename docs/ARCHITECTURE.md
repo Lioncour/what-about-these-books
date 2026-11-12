@@ -53,6 +53,14 @@ Nothing book-shaped lives in a random cloud database we run. Your library stays 
 Dev: `npm run dev` → Electron spawns `next dev`.  
 Prod: build standalone → Electron runs `resources/standalone/server.js`.
 
+**Packaging has three traps**, all found by launching the built app (`npm run smoke -- --packaged`), none visible from the project folder:
+
+1. Next copies the whole project, env files included, into `.next/standalone` when code reads from the project root. `scripts/prepare-standalone.mjs` keeps only what the server needs and fails the build on a leftover env file.
+2. electron-builder skips a top-level `node_modules` in `extraResources`; it is listed as its own entry in `package.json`.
+3. The Turbopack build forgets the route-handler runtime in the trace; the prepare script copies it. Inside the repo Node finds it in the project's `node_modules`, so the smoke test runs the standalone build from a copy outside the repo.
+
+A port is "free" only if nothing answers on it (binding 127.0.0.1 can succeed next to a server on all interfaces), and the window opens only after `/api/config` answers as our server.
+
 ---
 
 ## Why AWS Bedrock (and SSO)?

@@ -13,6 +13,36 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Fixed — the desktop app and its installer (first real launch since the review)
+
+A smoke test that launches Electron for real (`npm run smoke`, also in CI) found four
+problems the browser build could not show:
+
+- **The installer shipped `.env` and `.env.local`** and the whole project (sources, tests,
+  docs). Next traces reads that start at the project root and copies env files into its
+  standalone output. `scripts/prepare-standalone.mjs` now keeps only `server.js`,
+  `package.json`, `node_modules`, `.next` and `public`, and fails the build if an env file
+  is left. **Delete installers built before this and don't share them.**
+- **The installed app could not start**: electron-builder leaves a top-level
+  `node_modules` out of `extraResources`, so the local server had no modules at all. It is
+  now shipped as its own resource entry.
+- **Every API route failed outside the project folder**: Next 16's Turbopack build leaves
+  the route-handler runtime (`app-route-turbo.runtime.prod.js`) out of the trace. Inside
+  the project Node found it in the project's `node_modules`, which hid it. The build step
+  copies the missing runtimes and checks for them.
+- **A busy port 3000 showed someone else's page.** Binding 127.0.0.1 succeeds on Windows
+  while another server listens on all interfaces, so the app thought the port was free.
+  A port now counts as free only if nobody answers on it, and the app waits for a reply
+  only our server gives (`/api/config`) before opening the window.
+
+Also: web links in answers open in the system browser instead of doing nothing; the
+startup AWS check is skipped in smoke runs; `description` and `author` in package.json.
+
+The smoke test (`scripts/electron-smoke.mjs`): `--prod` runs the standalone build from a
+copy outside the repo, `--packaged` runs `dist/win-unpacked`, `--busy-port` occupies 3000
+first, `--real-data` uses your library instead of an empty temp one. Verified here: dev
+7/7 with a busy port, standalone 12/12, packaged 13/13 with the real library.
+
 ### Changed — librarians on a cheaper model, and the rest of the roadmap
 
 - **Librarians run on Haiku automatically.** With no model set, the librarian calls try

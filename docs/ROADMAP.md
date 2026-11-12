@@ -15,9 +15,10 @@ changelog is the record).
    (cost and pass/fail per case) and print the difference, so a prompt or model change
    shows what it did. Then tune the first wave (3 books) and the librarian model
    (Haiku vs Sonnet) against answer quality, not just cost.
-3. **Electron check.** Everything since the review was verified in the browser build.
-   Launch the desktop app once (`npm run dev`), check the port pick, quit behaviour and
-   the installer (`npm run dist`), and add an Electron smoke test to CI.
+3. **Installer on a clean machine.** The packaged app passes the smoke test here, where
+   Node, AWS CLI and a library already exist. Install `dist/What About This Book Setup`
+   on a machine without them and walk the first-run path (AWS profile dialog, empty
+   library, first upload). Then cut a release: bump the version, rename Unreleased.
 
 ## Soon
 
@@ -32,6 +33,9 @@ changelog is the record).
 
 ## Later
 
+- Installer size (182 MB): the standalone `node_modules` carries `sharp` and the full AWS
+  SDK; check what the server really loads.
+- Code signing for the installer (Windows SmartScreen warns on unsigned builds).
 - macOS / Linux packaging (config exists, never built).
 - `PUBLIC_MODE` as a real read-only deployment (auth, rate limits) or remove it; the old
   `deploy.sh` was deleted because it targeted Ollama.
