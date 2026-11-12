@@ -457,7 +457,15 @@ export function extractWhoIsTarget(input: string): string | null {
   const m = input.match(/\bwho is\s+["“”']?([^"“”'?\n]+?)["“”']?(?:\?|$)/i);
   if (!m?.[1]) return null;
   let value = m[1].trim();
-  value = value.split(/\s+(?:in|with|from|on|at|to|for|and|during|after|before)\s+/i)[0].trim();
+  const parts = value.split(/\s+(in|with|from|on|at|to|for|and|during|after|before)\s+/i);
+  value = parts[0].trim();
+  // Only a place may follow the name ("Who is Skippy in Columbus Day?"). Anything else
+  // ("Who is Joe in love with?", "Who is Joe and why does he matter?") is a real
+  // question about the person, not a lookup of who they are.
+  if (parts.length > 1) {
+    const tail = `${parts[1]} ${parts.slice(2).join(" ")}`.trim();
+    if (!/^(?:in|from)\s+(?:the\s+)?[A-Z0-9]/.test(tail)) return null;
+  }
   value = value.replace(/[.,!;:]+$/g, "").trim();
   // A capitalised name of 1-3 words, or a single lower-case word that isn't a
   // function word ("who is skippy?"); "who is the author" is not a lookup.

@@ -3,7 +3,7 @@
  * unit-tested and shared between hooks and components.
  */
 
-export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all";
+export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all" | "picked";
 
 /** Which books an answer was drawn from (`SCOPE` stream line). */
 export interface ScopeInfo {
@@ -22,7 +22,7 @@ export interface UsageInfo {
   ms: number;
 }
 
-const SCOPE_REASONS: ScopeReason[] = ["named", "focus", "series", "semantic", "all"];
+const SCOPE_REASONS: ScopeReason[] = ["named", "focus", "series", "semantic", "all", "picked"];
 const SCOPE_TITLES_SHOWN = 3;
 
 function count(value: unknown): number {
@@ -151,8 +151,45 @@ export function scopeReasonHint(reason: ScopeReason): string {
       return "this series";
     case "semantic":
       return "closest matches";
+    case "picked":
+      return "the books you picked";
     default:
       return "whole library";
+  }
+}
+
+/**
+ * The composer's scope chip, before a question is sent: what it will be asked against.
+ * "Asking Columbus Day" / "Asking 3 books: A, B, C" / "Asking the whole library".
+ */
+export function formatAskingLine(scope: ScopeInfo): string {
+  const titles = scope.books.map((b) => cleanDisplayTitle(b.title));
+  const total = titles.length + (scope.more ?? 0);
+  if (scope.reason === "all" || total === 0) {
+    return total > 1 ? `Asking the whole library · ${total} books` : "Asking the whole library";
+  }
+  if (total === 1 && titles.length === 1) return `Asking ${titles[0]}`;
+  if (titles.length === 0) return `Asking ${total} books`;
+  const shown = titles.slice(0, SCOPE_TITLES_SHOWN);
+  const rest = total - shown.length;
+  return `Asking ${total} books: ${shown.join(", ")}${rest > 0 ? ` +${rest}` : ""}`;
+}
+
+/** Why the chip says that, when it is worth saying. */
+export function askingHint(scope: ScopeInfo): string {
+  switch (scope.reason) {
+    case "named":
+      return "named in your question";
+    case "focus":
+      return "your focus book";
+    case "series":
+      return "this series";
+    case "picked":
+      return "picked by you";
+    case "all":
+      return "the closest books are chosen when you ask";
+    default:
+      return "";
   }
 }
 

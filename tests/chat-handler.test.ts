@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ENTITY_NODES, SPECIALIST_JSON, STREAMED_ANSWER, resetSettings } from "./chat-fixtures";
+import {
+  BOOKS, ENTITY_NODES, SPECIALIST_JSON, STREAMED_ANSWER, resetSettings } from "./chat-fixtures";
 
 type ClaudeOpts = { signal?: AbortSignal; system?: string } | undefined;
 
@@ -101,6 +102,7 @@ import { callClaudeStream, callClaudeText } from "@/lib/bedrock-claude";
 import { logChatEvent } from "@/lib/chat-debug";
 import { getEntityGraph } from "@/lib/knowledge-store";
 import { POST } from "@/lib/chat/handler";
+import { previewScope } from "@/lib/chat/scope";
 import { decodeStreamLine } from "@/lib/chat/stream-protocol";
 import type { ChatMessage, ChatSource } from "@/lib/chat/types";
 
@@ -148,6 +150,7 @@ class Answer {
   get statuses(): string[] {
     return this.of("STATUS");
   }
+  /** Sources as sent; each carries the id of its book. */
   get sources(): ChatSource[] {
     const raw = this.of("SOURCES");
     return raw.length ? (JSON.parse(raw[raw.length - 1]) as ChatSource[]) : [];
@@ -274,6 +277,7 @@ describe("who is", () => {
     expect(a.sources).toHaveLength(sourceCount);
     expect(a.sources[0]).toEqual({
       book: firstBook,
+      bookId: BOOKS.find((b) => b.title === firstBook)?.id,
       excerpt: expect.stringContaining("Skippy"),
       position: "Chapter 1",
     });
@@ -367,7 +371,9 @@ describe("exact mention count", () => {
     expect(a.text).toContain("- **Golden Dusk**: 1");
     expect(a.text).not.toContain("Lonely Harbor");
     expect(a.sources).toHaveLength(5);
-    expect(a.sources[0]).toEqual({ book: "Iron Dawn", excerpt: expect.any(String), position: "Chapter 1" });
+    expect(a.sources[0]).toEqual({ book: "Iron Dawn", bookId: "book-1", excerpt: expect.any(String), position: "Chapter 1" });
+    // Every citation names its book by id, so the reader can open it after a retitle.
+    expect(a.sources.every((r) => r.bookId)).toBe(true);
     noBedrock();
   });
 
@@ -417,8 +423,8 @@ describe("exact mention count", () => {
     expect(a.statuses[0]).toBe('Counting exact mentions of "Skippy" in "Silver Noon"...');
     expect(a.text).toContain("**Skippy** appears **2** times in **Silver Noon**.");
     expect(a.sources).toEqual([
-      { book: "Silver Noon", excerpt: expect.any(String), position: "Chapter 1" },
-      { book: "Silver Noon", excerpt: expect.any(String), position: "Chapter 2" },
+      { book: "Silver Noon", bookId: "book-2", excerpt: expect.any(String), position: "Chapter 1" },
+      { book: "Silver Noon", bookId: "book-2", excerpt: expect.any(String), position: "Chapter 2" },
     ]);
     noBedrock();
   });
@@ -467,7 +473,7 @@ describe("quote lookup", () => {
     expect(a.types).toEqual(["STATUS", "STATUS", "STATUS", "STATUS", "TEXT", "SOURCES"]);
     expect(a.statuses.slice(2)).toEqual(["Hunting for that exact line…", "Exact quote matches found: 1"]);
     expect(a.text).toContain("## Exact Quote Matches\n\nFound **1** matches across **1** book(s).\n\n### Iron Dawn\n- **Chapter 1**: ");
-    expect(a.sources).toEqual([{ book: "Iron Dawn", excerpt: expect.any(String), position: "Chapter 1" }]);
+    expect(a.sources).toEqual([{ book: "Iron Dawn", bookId: "book-1", excerpt: expect.any(String), position: "Chapter 1" }]);
     expect(store.searchExactQuoteAllBooks).toHaveBeenCalledWith("the stars looked very different today", 120);
     expect(store.queryAllBooks).not.toHaveBeenCalled();
     expect(textCalls()).toHaveLength(0);
@@ -487,7 +493,7 @@ describe("quote lookup", () => {
     const a = await ask({ bookId: "book-1", bookTitle: "Iron Dawn" }, QUOTE);
     expect(a.types).toEqual(["STATUS", "STATUS", "STATUS", "STATUS", "TEXT", "SOURCES"]);
     expect(a.text).toContain("## Exact Quote Matches in Iron Dawn\n\nFound **1** matches.\n- **Chapter 1**: ");
-    expect(a.sources).toEqual([{ book: "Iron Dawn", excerpt: expect.any(String), position: "Chapter 1" }]);
+    expect(a.sources).toEqual([{ book: "Iron Dawn", bookId: "book-1", excerpt: expect.any(String), position: "Chapter 1" }]);
     expect(store.searchExactQuoteInBook).toHaveBeenCalledWith("book-1", "the stars looked very different today", 70);
     expect(streamCalls()).toHaveLength(0);
   });
@@ -665,6 +671,7 @@ describe("specialists + orchestrator", () => {
     expect(a.sources).toEqual(
       ["Iron Dawn", "Silver Noon", "Golden Dusk", "Lonely Harbor"].map((book) => ({
         book,
+        bookId: BOOKS.find((b) => b.title === book)?.id,
         excerpt: "filthy monkeys",
         position: "Chapter 2",
       }))
@@ -685,7 +692,7 @@ describe("specialists + orchestrator", () => {
     expect(a.types).toEqual(["STATUS", "STATUS", "STATUS", "STATUS", "STATUS", "STATUS", "SPECIALISTS", "TOKEN", "SOURCES"]);
     expect(a.statuses[3]).toBe("Reading Silver Noon (named in your question)");
     expect(a.json<Report[]>("SPECIALISTS")[0].map((r) => r.bookTitle)).toEqual(["Silver Noon"]);
-    expect(a.sources).toEqual([{ book: "Silver Noon", excerpt: "filthy monkeys", position: "Chapter 2" }]);
+    expect(a.sources).toEqual([{ book: "Silver Noon", bookId: "book-2", excerpt: "filthy monkeys", position: "Chapter 2" }]);
     expect(store.queryAllBooks).not.toHaveBeenCalled();
     expect(store.queryBook).toHaveBeenCalledTimes(1);
     expect(vi.mocked(store.queryBook).mock.calls[0][0]).toBe("book-2");
@@ -733,7 +740,7 @@ describe("specialists + orchestrator", () => {
     expect(a.statuses[2]).toMatch(/^Consulting Librarian \w+ for "Silver Noon"\.\.\.$/);
     expect(a.statuses[3]).toBe("Writing this down for you…");
     expect(a.json<Report[]>("SPECIALISTS")[0].map((r) => r.bookTitle)).toEqual(["Silver Noon"]);
-    expect(a.sources).toEqual([{ book: "Silver Noon", excerpt: "filthy monkeys", position: "Chapter 2" }]);
+    expect(a.sources).toEqual([{ book: "Silver Noon", bookId: "book-2", excerpt: "filthy monkeys", position: "Chapter 2" }]);
     expect(store.queryAllBooks).not.toHaveBeenCalled();
     expect(store.queryBook).toHaveBeenCalledTimes(1);
     expect(textCalls()).toHaveLength(1);
@@ -902,5 +909,91 @@ describe("USAGE line (what this request spent)", () => {
     errorSpy.mockRestore();
     expect(a.of("ERROR")).toHaveLength(1);
     expect(usageOf(a).claudeCalls).toBe(0);
+  });
+});
+
+describe("books picked by hand", () => {
+  const picked = (...ids: string[]) => ({ bookId: "all", bookTitle: "All books", bookIds: ids });
+
+  it("counts only in the picked books, whatever the library holds", async () => {
+    const a = await ask(picked("book-1", "book-3"), "How many times is Skippy mentioned?");
+    expect(a.text).toContain("**Skippy** appears **4** times in the 2 books you picked.");
+    expect(a.text).toContain("- **Iron Dawn**: 3");
+    expect(a.text).toContain("- **Golden Dusk**: 1");
+    expect(a.text).not.toContain("Silver Noon");
+    expect(a.sources.every((s) => s.bookId === "book-1" || s.bookId === "book-3")).toBe(true);
+    expect(a.json("SCOPE")).toEqual([
+      { books: [{ id: "book-1", title: "Iron Dawn" }, { id: "book-3", title: "Golden Dusk" }], reason: "picked" },
+    ]);
+    expect(textCalls()).toHaveLength(0);
+    expect(streamCalls()).toHaveLength(0);
+  });
+
+  it("sends the librarians of exactly those books", async () => {
+    const a = await ask(picked("book-2", "book-4"), "What does Skippy think about humans in general?");
+    expect(a.json<{ books: Array<{ id: string }>; reason: string }>("SCOPE")[0]).toMatchObject({
+      books: [{ id: "book-2" }, { id: "book-4" }],
+      reason: "picked",
+    });
+    expect(logged("specialist_books_selected")[0][1]).toMatchObject({ chosen: ["Silver Noon", "Lonely Harbor"] });
+    // The library-wide seed query is never run for a hand-picked set.
+    expect(store.queryAllBooks).not.toHaveBeenCalled();
+  });
+
+  it("treats one picked book as a focus book and ignores unknown ids", async () => {
+    const a = await ask(picked("book-2", "book-nope"), "How many times is Skippy mentioned?");
+    expect(a.text).toContain("**Skippy** appears **2** times in **Silver Noon**");
+    expect(a.json<{ reason: string }>("SCOPE")[0].reason).toBe("focus");
+  });
+});
+
+describe("scope preview (no Bedrock)", () => {
+  const preview = (question: string, extra: Partial<Parameters<typeof previewScope>[0]> = {}) =>
+    previewScope({ bookId: "all", bookTitle: "All books", question, ...extra });
+
+  it("says the whole library until the question names a book", () => {
+    expect(preview("What happens to the crew?")).toEqual({ books: [], reason: "all", more: 4 });
+    expect(preview("In Silver Noon, what happens to the crew?")).toEqual({
+      books: [{ id: "book-2", title: "Silver Noon" }],
+      reason: "named",
+    });
+  });
+
+  it("knows a focus book, a series and a picked set", () => {
+    expect(preview("anything", { bookId: "book-2", bookTitle: "Silver Noon" }).reason).toBe("focus");
+    const series = preview("anything", { bookId: "series:series-1", bookTitle: "Star Run" });
+    expect(series.reason).toBe("series");
+    expect(series.books.map((b) => b.id)).toEqual(["book-1", "book-2", "book-3"]);
+    expect(preview("In Silver Noon, who wins?", { bookId: "series:series-1", bookTitle: "Star Run" })).toEqual({
+      books: [{ id: "book-2", title: "Silver Noon" }],
+      reason: "named",
+    });
+    expect(preview("anything", { pickedIds: ["book-4", "book-1", "book-4", 7] })).toEqual({
+      books: [{ id: "book-4", title: "Lonely Harbor" }, { id: "book-1", title: "Iron Dawn" }],
+      reason: "picked",
+    });
+  });
+
+  it("never embeds or calls Claude", () => {
+    preview("In Iron Dawn, how does it start?");
+    expect(store.queryAllBooks).not.toHaveBeenCalled();
+    expect(textCalls()).toHaveLength(0);
+  });
+});
+
+describe("dry run (the chat eval)", () => {
+  it("plans the librarians without writing their cache or scorecards", async () => {
+    const { runChatInProcess } = await import("@/lib/chat/handler");
+    const { setCachedSpecialistAnswer, updateSpecialistScorecard } = await import("@/lib/quality-store");
+    const run = await runChatInProcess(
+      { bookId: "all", bookTitle: "All books", question: "What does Skippy think about humans in general?" },
+      { dryRun: true }
+    );
+    const a = new Answer(parseLines(run.lines.join("\n")));
+    expect(run.route?.kind).toBe("open_rag");
+    expect(a.json<{ reason: string }>("SCOPE")[0].reason).toBe("semantic");
+    expect(a.json<{ claudeCalls: number }>("USAGE")).toHaveLength(1);
+    expect(setCachedSpecialistAnswer).not.toHaveBeenCalled();
+    expect(updateSpecialistScorecard).not.toHaveBeenCalled();
   });
 });

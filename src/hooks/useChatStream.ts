@@ -23,9 +23,12 @@ function errorText(err: unknown): string {
  */
 export function useChatStream({
   focus,
+  pickedIds,
   onLibraryChanged,
 }: {
   focus: FocusBook | null;
+  /** Books picked by hand in the composer; two or more narrow the question to them. */
+  pickedIds: string[];
   /** The answer changed the library (a chat command); `clearFocus` when the focus book may be gone. */
   onLibraryChanged: (clearFocus: boolean) => void;
 }) {
@@ -72,6 +75,7 @@ export function useChatStream({
           body: JSON.stringify({
             bookId: focus?.id || "all",
             bookTitle: focus?.title || "All Books",
+            ...(pickedIds.length >= 2 ? { bookIds: pickedIds } : {}),
             messages: history.map((m) => ({
               role: m.role,
               content: m.content,
@@ -204,7 +208,7 @@ export function useChatStream({
         finishRun(run);
       }
     },
-    [focus, onLibraryChanged, finishRun]
+    [focus, pickedIds, onLibraryChanged, finishRun]
   );
 
   /** Ask a question. Returns false when there is nothing to send or an answer is in flight. */

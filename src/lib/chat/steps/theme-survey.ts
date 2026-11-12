@@ -12,7 +12,11 @@ export function themeSurveyStep(ctx: ChatContext): boolean {
   if (ctx.route.kind !== "theme_pop_culture") return false;
 
   ctx.announceScope();
-  const hits = findPopCultureReferences({ bookId: ctx.bookId, maxHits: 10 });
+  const hits = ctx.scope.picked
+    ? findPopCultureReferences({ bookId: ctx.bookId, maxHits: 80 })
+        .filter((hit) => !hit.bookId || ctx.scope.includes(hit.bookId))
+        .slice(0, 10)
+    : findPopCultureReferences({ bookId: ctx.bookId, maxHits: 10 });
   logChatEvent("theme_survey_answered", {
     bookId: ctx.bookId,
     kind: "pop_culture",

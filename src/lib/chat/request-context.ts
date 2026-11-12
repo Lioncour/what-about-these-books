@@ -12,7 +12,12 @@ interface RequestContext {
   /** Aborts every Bedrock call of the request, including embeddings made by Vectra. */
   signal?: AbortSignal;
   usage: RequestUsage;
+  /** Eval dry run: Claude calls are counted but not made. */
+  dryRun?: boolean;
 }
+
+/** What a skipped Claude call returns in a dry run. */
+export const DRY_RUN_TEXT = "[dry run: Claude call skipped]";
 
 const storage = new AsyncLocalStorage<RequestContext>();
 
@@ -26,10 +31,18 @@ export function emptyUsage(): RequestUsage {
  * being passed along; code outside any request (ingest, reindex) sees none.
  */
 export function runWithRequestContext<T>(
-  context: { signal?: AbortSignal; usage?: RequestUsage },
+  context: { signal?: AbortSignal; usage?: RequestUsage; dryRun?: boolean },
   fn: () => T
 ): T {
-  return storage.run({ signal: context.signal, usage: context.usage ?? emptyUsage() }, fn);
+  return storage.run(
+    { signal: context.signal, usage: context.usage ?? emptyUsage(), dryRun: context.dryRun },
+    fn
+  );
+}
+
+/** True inside an eval dry run: plan the Claude calls, don't spend them. */
+export function isDryRun(): boolean {
+  return storage.getStore()?.dryRun === true;
 }
 
 /** The current request's abort signal, if this code runs inside a chat request. */

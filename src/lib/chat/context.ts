@@ -1,5 +1,5 @@
 import { DEFAULT_BEDROCK_MODEL_ID } from "@/lib/bedrock-client";
-import { listSeries, loadSettings, type AISettings, type CountMode, type SeriesEntry } from "@/lib/book-store";
+import { listBooks, listSeries, loadSettings, type AISettings, type CountMode, type SeriesEntry } from "@/lib/book-store";
 import { logChatEvent } from "@/lib/chat-debug";
 import { cleanBookDisplayTitle } from "@/lib/chat/display-title";
 import {
@@ -107,6 +107,8 @@ function seriesForContinuity(scope: Scope, bookId: string, counted: SeriesEntry 
 export function buildChatContext(input: {
   bookId: string;
   bookTitle: string;
+  /** Books the reader picked by hand for this question (two or more narrow the scope). */
+  bookIds?: string[];
   messages: ChatMessage[];
   lastUserMessage: ChatMessage;
   signal: AbortSignal;
@@ -126,7 +128,7 @@ export function buildChatContext(input: {
     });
   }
 
-  const scope = buildScope(bookId, bookTitle, question);
+  const scope = buildScope(bookId, bookTitle, question, input.bookIds);
   const mentionTarget = resolveCountTarget(question, messages);
 
   let recentConversation = settings.ai.useConversationMemory === false ? "" : buildRecentConversation(messages);
@@ -178,7 +180,13 @@ export function buildChatContext(input: {
       if (delta) writer.field("TOKEN", delta);
     },
     sendSources(rows) {
-      if (rows.length) writer.line("SOURCES", JSON.stringify(rows.slice(0, MAX_SOURCES_PER_ANSWER)));
+      if (!rows.length) return;
+      // Citations carry the book's id so the reader can open them after a retitle.
+      const idByTitle = new Map(listBooks().map((b) => [b.title, b.id]));
+      const withIds = rows
+        .slice(0, MAX_SOURCES_PER_ANSWER)
+        .map((r) => (r.bookId || !idByTitle.has(r.book) ? r : { ...r, bookId: idByTitle.get(r.book) }));
+      writer.line("SOURCES", JSON.stringify(withIds));
     },
     announceScope(books = scope.books, reason = scope.reason) {
       if (scopeAnnounced) return;

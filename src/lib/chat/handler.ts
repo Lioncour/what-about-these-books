@@ -3,7 +3,7 @@ import { isAbortError } from "@/lib/bedrock-client";
 import { logChatEvent } from "@/lib/chat-debug";
 import { buildChatContext, type ChatContext, type ChatStep } from "@/lib/chat/context";
 import { emptyUsage, runWithRequestContext, type RequestUsage } from "@/lib/chat/request-context";
-import { describeRoute } from "@/lib/chat/router";
+import { describeRoute, type ChatRoute } from "@/lib/chat/router";
 import { haveYouReadStep, libraryCountStep } from "@/lib/chat/steps/catalog-facts";
 import { entityGraphStep, timelineConflictsStep } from "@/lib/chat/steps/knowledge";
 import { libraryCommandStep } from "@/lib/chat/steps/library-command";
@@ -16,7 +16,7 @@ import { smallTalkStep } from "@/lib/chat/steps/small-talk";
 import { specialistsStep } from "@/lib/chat/steps/specialists";
 import { themeSurveyStep } from "@/lib/chat/steps/theme-survey";
 import { whoIsStep } from "@/lib/chat/steps/who-is";
-import { createStreamWriter, type StreamWriter } from "@/lib/chat/stream-writer";
+import { createCollectingWriter, createStreamWriter, type StreamWriter } from "@/lib/chat/stream-writer";
 import type { ChatMessage } from "@/lib/chat/types";
 
 export const maxDuration = 120;
@@ -59,6 +59,7 @@ const PIPELINE: ChatStep[] = [
 interface ChatRequest {
   bookId: string;
   bookTitle: string;
+  bookIds?: string[];
   messages: ChatMessage[];
   lastUserMessage: ChatMessage;
 }
@@ -68,13 +69,19 @@ function sendUsage(writer: StreamWriter, usage: RequestUsage, startedAt: number)
   writer.field("USAGE", JSON.stringify({ ...usage, ms: Date.now() - startedAt }));
 }
 
-async function runPipeline(input: ChatRequest, writer: StreamWriter, signal: AbortSignal): Promise<void> {
+async function runPipeline(
+  input: ChatRequest,
+  writer: StreamWriter,
+  signal: AbortSignal,
+  opts: { dryRun?: boolean; onRoute?: (route: ChatRoute) => void } = {}
+): Promise<void> {
   const startedAt = Date.now();
   const usage = emptyUsage();
   let ctx: ChatContext | null = null;
   try {
-    await runWithRequestContext({ signal, usage }, async () => {
+    await runWithRequestContext({ signal, usage, dryRun: opts.dryRun }, async () => {
       ctx = buildChatContext({ ...input, signal, writer });
+      opts.onRoute?.(ctx.route);
       for (const step of PIPELINE) {
         ctx.checkpoint();
         if (await step(ctx)) break;
@@ -104,13 +111,47 @@ async function runPipeline(input: ChatRequest, writer: StreamWriter, signal: Abo
   }
 }
 
+/**
+ * Run one question through the real pipeline in-process and return its stream lines
+ * (the eval). With `dryRun`, Claude calls are counted in USAGE but not made, so the
+ * route, the scope and every deterministic answer are real and nothing is spent on
+ * generation; semantic search still embeds the question.
+ */
+export async function runChatInProcess(
+  input: { bookId: string; bookTitle: string; bookIds?: string[]; question: string },
+  opts: { dryRun?: boolean; signal?: AbortSignal } = {}
+): Promise<{ lines: string[]; route: ChatRoute | null }> {
+  const lastUserMessage: ChatMessage = { role: "user", content: input.question };
+  const writer = createCollectingWriter();
+  let route: ChatRoute | null = null;
+  await runPipeline(
+    {
+      bookId: input.bookId,
+      bookTitle: input.bookTitle,
+      bookIds: input.bookIds,
+      messages: [lastUserMessage],
+      lastUserMessage,
+    },
+    writer,
+    opts.signal ?? new AbortController().signal,
+    { dryRun: opts.dryRun, onRoute: (r) => (route = r) }
+  );
+  return { lines: writer.lines, route };
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { bookId, bookTitle, messages } = (await request.json()) as {
+    const body = (await request.json()) as {
       bookId: string;
       bookTitle: string;
+      bookIds?: unknown;
       messages: ChatMessage[];
     };
+    const { bookId, bookTitle, messages } = body;
+    // Books picked by hand in the composer; validated against the catalog by the scope.
+    const bookIds = Array.isArray(body.bookIds)
+      ? body.bookIds.filter((id): id is string => typeof id === "string").slice(0, 200)
+      : undefined;
     if (!bookId || !messages?.length) {
       return Response.json({ error: "Missing book ID or messages" }, { status: 400 });
     }
@@ -121,6 +162,7 @@ export async function POST(request: NextRequest) {
     logChatEvent("chat_request_received", {
       bookId,
       bookTitle,
+      pickedBooks: bookIds?.length || 0,
       messageCount: messages.length,
       lastUserMessage: lastUserMessage.content.slice(0, 300),
     });
@@ -141,7 +183,7 @@ export async function POST(request: NextRequest) {
       async start(controller) {
         writer = createStreamWriter(controller);
         try {
-          await runPipeline({ bookId, bookTitle, messages, lastUserMessage }, writer, abort.signal);
+          await runPipeline({ bookId, bookTitle, bookIds, messages, lastUserMessage }, writer, abort.signal);
         } finally {
           request.signal.removeEventListener("abort", onRequestAbort);
         }

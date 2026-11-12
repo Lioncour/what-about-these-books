@@ -9,7 +9,12 @@ export function passageFindStep(ctx: ChatContext): boolean {
   if (ctx.route.kind !== "passage_find") return false;
 
   ctx.announceScope();
-  const hits = findSmartPassages({ question: ctx.question, bookId: ctx.bookId, maxHits: 3 });
+  // Hand-picked books search the library and keep only hits inside the pick.
+  const hits = ctx.scope.picked
+    ? findSmartPassages({ question: ctx.question, bookId: ctx.bookId, maxHits: 40 })
+        .filter((hit) => ctx.scope.includes(hit.bookId))
+        .slice(0, 3)
+    : findSmartPassages({ question: ctx.question, bookId: ctx.bookId, maxHits: 3 });
   // Primary hit first; at most one related reference.
   const sources = hits.slice(0, 2).map((hit) => ({
     book: cleanBookDisplayTitle(hit.bookTitle),

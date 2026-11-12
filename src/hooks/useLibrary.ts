@@ -10,6 +10,15 @@ interface BookRow {
   title?: string;
   author?: string;
   seriesId?: string;
+  seriesOrder?: number;
+}
+
+/** A book as the scope picker lists it. */
+export interface LibraryBook {
+  id: string;
+  /** Display title. */
+  title: string;
+  series?: string;
 }
 
 /** The library as the page needs it: how many books, recent titles, the focus book. */
@@ -17,6 +26,7 @@ export function useLibrary() {
   const libraryRef = useRef<BookLibraryHandle>(null);
   const [bookCount, setBookCount] = useState(0);
   const [recentTitles, setRecentTitles] = useState<string[]>([]);
+  const [books, setBooks] = useState<LibraryBook[]>([]);
   const [focus, setFocus] = useState<FocusBook | null>(null);
 
   const reloadSummary = useCallback(() => {
@@ -34,6 +44,26 @@ export function useLibrary() {
           )
         );
         setBookCount(books.length);
+        const rows = books
+          .filter((b) => b.id)
+          .map((b) => {
+            const series = b.seriesId ? seriesNames.get(b.seriesId) : undefined;
+            return {
+              id: String(b.id),
+              title: cleanDisplayTitle(String(b.title || ""), { author: b.author, series }),
+              series,
+              order: typeof b.seriesOrder === "number" ? b.seriesOrder : Number.MAX_SAFE_INTEGER,
+            };
+          });
+        // Series together and in reading order; standalone books after, by title.
+        rows.sort(
+          (a, b) =>
+            (a.series ? 0 : 1) - (b.series ? 0 : 1) ||
+            (a.series || "").localeCompare(b.series || "") ||
+            a.order - b.order ||
+            a.title.localeCompare(b.title)
+        );
+        setBooks(rows.map(({ id, title, series }) => ({ id, title, series })));
         setRecentTitles(
           books
             .slice(0, 3)
@@ -70,6 +100,7 @@ export function useLibrary() {
     libraryRef,
     bookCount,
     recentTitles,
+    books,
     focus,
     setFocus,
     toggleFocus,

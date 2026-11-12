@@ -5,6 +5,7 @@ import type { FocusBook } from "@/components/chat/messages";
 /** Above the conversation: what is being talked about, Past notes toggle, Fresh page. */
 export default function ChatHeader({
   focus,
+  pickedCount,
   bookCount,
   pastNotesOpen,
   onClearFocus,
@@ -12,6 +13,8 @@ export default function ChatHeader({
   onNewChat,
 }: {
   focus: FocusBook | null;
+  /** Books picked by hand for the next question (two or more). */
+  pickedCount?: number;
   bookCount: number;
   pastNotesOpen: boolean;
   onClearFocus: () => void;
@@ -43,7 +46,11 @@ export default function ChatHeader({
           </div>
         ) : (
           <p className="mt-1 font-display text-lg font-semibold leading-snug sm:text-xl">
-            {bookCount > 0 ? "Across your shelves" : "Waiting for a book"}
+            {pickedCount && pickedCount >= 2
+              ? `Across ${pickedCount} picked books`
+              : bookCount > 0
+                ? "Across your shelves"
+                : "Waiting for a book"}
           </p>
         )}
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import BookLibrary from "@/components/BookLibrary";
 import LibraryRail from "@/components/LibraryRail";
@@ -12,12 +12,16 @@ import type { Source } from "@/components/chat/MessageExtras";
 import MessageList from "@/components/chat/MessageList";
 import PassageReader, { type PassageReaderTarget } from "@/components/chat/PassageReader";
 import PastNotes from "@/components/chat/PastNotes";
+import ScopeChip from "@/components/chat/ScopeChip";
 import WelcomePanel from "@/components/chat/WelcomePanel";
 import { useChatHistory } from "@/hooks/useChatHistory";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useLibrary } from "@/hooks/useLibrary";
 import { useLibraryRail } from "@/hooks/useLibraryRail";
 import { useQuickActions } from "@/hooks/useQuickActions";
+import { useScopePreview } from "@/hooks/useScopePreview";
+
+const NO_BOOKS: string[] = [];
 
 export default function Home() {
   const [input, setInput] = useState("");
@@ -25,6 +29,8 @@ export default function Home() {
   const [companionMode, setCompanionMode] = useState(true);
   const [pastNotesOpen, setPastNotesOpen] = useState(false);
   const [passageTarget, setPassageTarget] = useState<PassageReaderTarget | null>(null);
+  // Books picked by hand for the next questions; two or more override the library scope.
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
   const composerRef = useRef<ComposerHandle>(null);
 
   const rail = useLibraryRail();
@@ -32,6 +38,7 @@ export default function Home() {
     libraryRef,
     bookCount,
     recentTitles,
+    books,
     focus,
     setFocus,
     clearFocus,
@@ -48,7 +55,30 @@ export default function Home() {
     [clearFocus, refreshLibrary]
   );
 
-  const chat = useChatStream({ focus, onLibraryChanged: handleLibraryChanged });
+  // Only books still on the shelves count as picked (a book may have been removed).
+  const picked = pickedIds.filter((id) => books.some((b) => b.id === id));
+  const activePicked = picked.length >= 2 ? picked : NO_BOOKS;
+  const pickedKey = activePicked.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by content, not identity
+  const sentPicked = useMemo(() => activePicked, [pickedKey]);
+
+  const chat = useChatStream({ focus, pickedIds: sentPicked, onLibraryChanged: handleLibraryChanged });
+  const scopePreview = useScopePreview({ question: input, focus, pickedIds: sentPicked, books });
+
+  /** The picker's answer: nothing = whole library, one = focus book, more = picked set. */
+  const applyPicked = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 1) {
+        const book = books.find((b) => b.id === ids[0]);
+        setPickedIds([]);
+        if (book) setFocus({ id: book.id, title: book.title });
+        return;
+      }
+      setPickedIds(ids);
+      clearFocus();
+    },
+    [books, setFocus, clearFocus]
+  );
   const history = useChatHistory({
     messages: chat.messages,
     setMessages: chat.setMessages,
@@ -101,6 +131,8 @@ export default function Home() {
 
   const handleSelectBook = useCallback(
     (book: { id: string; title: string }) => {
+      // Clicking a book on the shelves is a single focus; it replaces a picked set.
+      setPickedIds([]);
       toggleFocus(book);
       focusComposer();
     },
@@ -150,6 +182,7 @@ export default function Home() {
         <main className="flex min-w-0 flex-1 flex-col">
           <ChatHeader
             focus={focus}
+            pickedCount={sentPicked.length}
             bookCount={bookCount}
             pastNotesOpen={pastNotesOpen}
             onClearFocus={clearFocus}
@@ -161,7 +194,11 @@ export default function Home() {
             <PastNotes
               chats={history.chats}
               activeChatId={history.chatId}
-              onOpen={(id) => void history.loadChat(id)}
+              onOpen={(id) => {
+                // Picking a conversation puts the drawer away so the notes are readable.
+                setPastNotesOpen(false);
+                void history.loadChat(id);
+              }}
               onDelete={(id) => void history.deleteChat(id)}
             />
           )}
@@ -192,6 +229,19 @@ export default function Home() {
             onStop={chat.stop}
             isLoading={chat.isLoading}
             placeholder={focus ? `Ask about ${focus.title}…` : "Write a note or question…"}
+            above={
+              bookCount > 0 ? (
+                <ScopeChip
+                  preview={scopePreview}
+                  books={books}
+                  selectedIds={focus ? [focus.id] : sentPicked}
+                  onApply={(ids) => {
+                    applyPicked(ids);
+                    focusComposer();
+                  }}
+                />
+              ) : null
+            }
           />
         </main>
       </div>

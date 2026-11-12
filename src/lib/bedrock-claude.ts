@@ -10,7 +10,7 @@ import {
 } from "@/lib/bedrock-client";
 import { logChatEvent } from "@/lib/chat-debug";
 import { recordTokenUsage } from "@/lib/token-usage-store";
-import { recordRequestClaudeCall } from "@/lib/chat/request-context";
+import { DRY_RUN_TEXT, isDryRun, recordRequestClaudeCall } from "@/lib/chat/request-context";
 
 type AnthropicUsage = {
   input_tokens?: number;
@@ -59,6 +59,11 @@ export async function callClaudeText(
   modelId?: string,
   opts?: ClaudeCallOptions
 ): Promise<string> {
+  if (isDryRun()) {
+    opts?.signal?.throwIfAborted();
+    recordRequestClaudeCall(0, 0);
+    return DRY_RUN_TEXT;
+  }
   const started = Date.now();
   const resolvedModel = modelId || DEFAULT_BEDROCK_MODEL_ID;
   const command = new InvokeModelCommand({
@@ -105,6 +110,12 @@ export async function callClaudeStream(
   modelId?: string,
   opts?: ClaudeCallOptions
 ): Promise<string> {
+  if (isDryRun()) {
+    opts?.signal?.throwIfAborted();
+    recordRequestClaudeCall(0, 0);
+    onToken(DRY_RUN_TEXT);
+    return DRY_RUN_TEXT;
+  }
   const started = Date.now();
   const resolvedModel = modelId || DEFAULT_BEDROCK_MODEL_ID;
   const command = new InvokeModelWithResponseStreamCommand({

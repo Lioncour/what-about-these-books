@@ -78,7 +78,10 @@ describe("intent heuristics", () => {
   it("who-is accepts names and single lower-case words, not function words", () => {
     expect(extractWhoIsTarget("Who is Skippy?")).toBe("Skippy");
     expect(extractWhoIsTarget("who is skippy?")).toBe("skippy");
-    expect(extractWhoIsTarget("Who is Joe in love with?")).toBe("Joe");
+    // A question about the person is not a "who is" lookup; a place after the name is fine.
+    expect(extractWhoIsTarget("Who is Joe in love with?")).toBeNull();
+    expect(extractWhoIsTarget("Who is Joe and why does he matter?")).toBeNull();
+    expect(extractWhoIsTarget("Who is Skippy in Columbus Day?")).toBe("Skippy");
     expect(extractWhoIsTarget("Who is the author?")).toBeNull();
   });
 

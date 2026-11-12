@@ -11,6 +11,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "eval:harness": "node scripts/run-eval.mjs",
+    "eval:chat": "node scripts/run-eval.mjs --chat",
     "dist": "npm run build && electron-builder --win",
     "dist:setup": "node scripts/setup-user-config.mjs && powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
     "electron:start": "cross-env NODE_ENV=production electron .",

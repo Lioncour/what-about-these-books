@@ -123,6 +123,10 @@ Encoding lives in `src/lib/chat/stream-protocol.ts`.
 
 Before anything is embedded, `findNamedBooksInQuestion` (`specialist-limits.ts`) looks for catalog titles (or "book 3" of a series named in the question). Named books are read first and, when exactly one is named, alone; exact mention counts scope the same way. This is what keeps "In Columbus Day, …" from being answered by books 2–7.
 
+### Choosing the scope before sending
+
+The composer shows a scope chip (`components/chat/ScopeChip.tsx`, `hooks/useScopePreview.ts`). With a focus book or hand-picked books the scope is known in the browser; otherwise the chip asks `POST /api/chat/scope` (debounced, catalog only) whether the question names a book. Picking two or more books sends `bookIds` with the question, and `buildScope` returns a picked scope: the library scope narrowed to exactly those books, for every step.
+
 ### Pipeline overview
 
 ```
@@ -262,7 +266,7 @@ eval/gold-questions.json  # retrieval eval fixtures
 3. **Voice / formatting** — `response-formatting.ts`  
 4. **Models** — settings UI → `modelRouting` → Bedrock IDs  
 5. **Packaging** — `prepare-standalone.mjs` + `package.json` `build`  
-6. **Eval** — `eval-harness.ts` + `npm run eval:harness` (retrieval today, not full chat)
+6. **Eval** — `npm run eval:chat` (`src/lib/chat-eval.ts`, cases in `eval/chat-cases.json`) runs gold questions through the real pipeline in-process: dry by default (Claude calls counted via the request context's `dryRun`, not made), `--live` for real answers. Add a case whenever a routing or scope bug is fixed. `npm run eval:harness` is the older retrieval-only check.
 
 ---
 

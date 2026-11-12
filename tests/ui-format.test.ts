@@ -3,6 +3,8 @@ import {
   cleanDisplayTitle,
   formatDuration,
   formatLabelSummary,
+  askingHint,
+  formatAskingLine,
   formatScopeLine,
   formatTitlesPhrase,
   formatTokenCount,
@@ -211,5 +213,27 @@ describe("saved chats", () => {
     expect(chatTitleFrom([])).toBe("Chat");
     expect(chatTitleFrom([{ role: "user", content: "Who is Skippy?" }])).toBe("Who is Skippy?");
     expect(chatTitleFrom([{ role: "user", content: "x".repeat(50) }])).toBe(`${"x".repeat(32)}…`);
+  });
+});
+
+describe("formatAskingLine (the composer's scope chip)", () => {
+  it("says the whole library, with its size when known", () => {
+    expect(formatAskingLine({ books: [], reason: "all" })).toBe("Asking the whole library");
+    expect(formatAskingLine({ books: [], reason: "all", more: 18 })).toBe("Asking the whole library · 18 books");
+  });
+
+  it("names one book, lists a few, counts the rest", () => {
+    expect(formatAskingLine({ books: books("Columbus Day"), reason: "named" })).toBe("Asking Columbus Day");
+    expect(formatAskingLine({ books: books("A", "B"), reason: "picked" })).toBe("Asking 2 books: A, B");
+    expect(formatAskingLine({ books: books("A", "B", "C", "D"), reason: "picked", more: 2 })).toBe(
+      "Asking 6 books: A, B, C +3"
+    );
+  });
+
+  it("explains why", () => {
+    expect(askingHint({ books: books("A"), reason: "named" })).toBe("named in your question");
+    expect(askingHint({ books: books("A", "B"), reason: "picked" })).toBe("picked by you");
+    expect(askingHint({ books: [], reason: "all" })).toBe("the closest books are chosen when you ask");
+    expect(scopeReasonHint("picked")).toBe("the books you picked");
   });
 });

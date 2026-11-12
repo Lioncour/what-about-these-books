@@ -33,12 +33,16 @@ import {
   type BookRef,
   type LibrarySpecialistSelection,
 } from "@/lib/chat/specialist-limits";
+import { MAX_LIBRARY_SPECIALIST_BOOKS } from "@/lib/chat/constants";
 import type { ChatSource } from "@/lib/chat/types";
 
 export type ScopeKind = "all" | "series" | "book";
 
 /** Why these books answer the question (the SCOPE stream line). */
-export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all";
+export type ScopeReason = "named" | "focus" | "series" | "semantic" | "all" | "picked";
+
+/** Most books a reader may pick for one question. */
+export const MAX_PICKED_BOOKS = 40;
 
 export interface ScopedPassage {
   bookTitle: string;
@@ -90,6 +94,10 @@ export interface Scope {
   books: BookRef[];
   /** SCOPE reason when an answer draws on all of `books`. */
   reason: ScopeReason;
+  /** True when the reader picked these books by hand (kind stays "all": a small library). */
+  picked: boolean;
+  /** Whether a book belongs to this scope (for helpers that search by `bookId`). */
+  includes(bookId: string): boolean;
   text: ScopeText;
   semantic(question: string, max: number): Promise<ScopedPassage[]>;
   keyword(words: string[], max: number): ScopedMatch[];
@@ -120,7 +128,140 @@ function toSelection(sel: LibrarySpecialistSelection, fallback: ScopeReason): Sp
   };
 }
 
-export function buildScope(bookId: string, bookTitle: string, question: string): Scope {
+/**
+ * Books the reader picked by hand, as catalog entries. Unknown ids are dropped; fewer
+ * than two is not a picked scope (one book is plain book focus).
+ */
+export function resolvePickedBooks(ids: unknown): BookRef[] {
+  if (!Array.isArray(ids)) return [];
+  const seen = new Set<string>();
+  const books: BookRef[] = [];
+  for (const id of ids) {
+    if (typeof id !== "string" || seen.has(id)) continue;
+    seen.add(id);
+    const book = getBookById(id);
+    if (book) books.push({ id: book.id, title: book.title });
+    if (books.length >= MAX_PICKED_BOOKS) break;
+  }
+  return books;
+}
+
+/**
+ * A hand-picked set of books: the library scope narrowed to exactly these. Every
+ * search, count and specialist runs over them and nothing else, whatever the question
+ * names, because the reader said so explicitly.
+ */
+function pickedScope(picked: BookRef[], question: string): Scope {
+  const ids = new Set(picked.map((b) => b.id));
+  const label = `the ${picked.length} books you picked`;
+  const base = libraryText();
+  const perBook = (max: number) => Math.max(2, Math.ceil(max / picked.length) + 1);
+  return {
+    kind: "all",
+    label,
+    series: null,
+    books: picked,
+    reason: "picked",
+    picked: true,
+    includes: (id) => ids.has(id),
+    text: { ...base, searching: `Searching ${label} (semantic search)...` },
+    semantic: async (q, max) => {
+      const rows = await Promise.all(
+        picked.map(async (b) => (await queryBook(b.id, q, perBook(max))).map((p) => ({ ...p, bookTitle: b.title })))
+      );
+      // Interleave so every picked book is heard before any gets a second passage.
+      const out: ScopedPassage[] = [];
+      for (let i = 0; out.length < max && rows.some((r) => i < r.length); i++) {
+        for (const r of rows) if (i < r.length && out.length < max) out.push(r[i]);
+      }
+      return out;
+    },
+    keyword: (words, max) =>
+      picked
+        .flatMap((b) => searchBookKeyword(b.id, words, perBook(max)).map((m) => ({ ...m, bookTitle: b.title })))
+        .slice(0, max),
+    exactQuote: (quote) =>
+      picked.flatMap((b) => searchExactQuoteInBook(b.id, quote, 30).map((m) => ({ ...m, bookTitle: b.title }))),
+    countMentions: (target, mode) => {
+      const rows = picked
+        .map((b) => ({ book: b, count: countBookKeywordMentions(b.id, target, mode) }))
+        .filter((r) => r.count > 0)
+        .sort((a, b) => b.count - a.count);
+      const scopeLabel = `in ${label}`;
+      return {
+        kind: "all",
+        where: scopeLabel,
+        scopeLabel,
+        total: rows.reduce((sum, r) => sum + r.count, 0),
+        byBook: rows.map((r) => [r.book.title, r.count] as [string, number]),
+        sources: picked
+          .flatMap((b) => searchBookKeyword(b.id, [target], 4).map((m) => matchToSource({ ...m, bookTitle: b.title })))
+          .slice(0, MAX_COUNT_SOURCES),
+        books: picked,
+        reason: "picked",
+      };
+    },
+    mentionSeries: () => null,
+    selectSpecialistBooks: async () => ({
+      books: picked.slice(0, MAX_LIBRARY_SPECIALIST_BOOKS),
+      namedBooks: findNamedBooksInQuestion(question).filter((b) => ids.has(b.id)),
+      seedByTitle: new Map(),
+      reason: "picked",
+    }),
+  };
+}
+
+/** What the SCOPE line will most likely say for this question, without any Bedrock call. */
+export interface ScopePreview {
+  books: BookRef[];
+  reason: ScopeReason;
+  /** Books in scope beyond the listed ones. */
+  more?: number;
+}
+
+const MAX_PREVIEW_BOOKS = 20;
+
+/**
+ * The books a question would be asked against, for the composer's scope chip. Exact for
+ * picked books, a focus book and named books; for an open library question the closest
+ * books are only chosen when the question is embedded, so it says "all" with the size.
+ */
+export function previewScope(input: {
+  bookId: string;
+  bookTitle: string;
+  question: string;
+  pickedIds?: unknown;
+}): ScopePreview {
+  const clean = (books: BookRef[]): ScopePreview["books"] =>
+    books.slice(0, MAX_PREVIEW_BOOKS).map((b) => ({ id: b.id, title: cleanBookDisplayTitle(b.title) }));
+  const withMore = (books: BookRef[], reason: ScopeReason): ScopePreview => {
+    const more = books.length - Math.min(books.length, MAX_PREVIEW_BOOKS);
+    return { books: clean(books), reason, ...(more > 0 ? { more } : {}) };
+  };
+
+  const picked = resolvePickedBooks(input.pickedIds);
+  if (picked.length >= 2) return withMore(picked, "picked");
+  if (picked.length === 1) return withMore(picked, "focus");
+
+  const scope = buildScope(input.bookId, input.bookTitle, input.question);
+  if (scope.kind === "book") return withMore(scope.books, "focus");
+
+  const named = input.question.trim() ? findNamedBooksInQuestion(input.question) : [];
+  if (scope.kind === "series") {
+    const inSeries = named.filter((b) => scope.includes(b.id));
+    return inSeries.length ? withMore(inSeries, "named") : withMore(scope.books, "series");
+  }
+  if (named.length) return withMore(named, "named");
+  return { books: [], reason: "all", ...(scope.books.length ? { more: scope.books.length } : {}) };
+}
+
+export function buildScope(bookId: string, bookTitle: string, question: string, pickedIds?: unknown): Scope {
+  const pickedBooks = resolvePickedBooks(pickedIds);
+  if (pickedBooks.length >= 2) return pickedScope(pickedBooks, question);
+  if (pickedBooks.length === 1) {
+    bookId = pickedBooks[0].id;
+    bookTitle = pickedBooks[0].title;
+  }
   const kind: ScopeKind = bookId === "all" ? "all" : bookId.startsWith("series:") ? "series" : "book";
   const seriesId = kind === "series" ? bookId.slice("series:".length) : "";
   const series = kind === "series" ? listSeries().find((s) => s.id === seriesId) || null : null;
@@ -206,6 +347,8 @@ export function buildScope(bookId: string, bookTitle: string, question: string):
       series: null,
       books: refs(listBooks()),
       reason: "all",
+      picked: false,
+      includes: () => true,
       text: libraryText(),
       semantic: (q, max) => queryAllBooks(q, max),
       keyword: (words, max) => searchAllBooksKeyword(words, max),
@@ -224,6 +367,8 @@ export function buildScope(bookId: string, bookTitle: string, question: string):
       series,
       books: refs(listBooks().filter((b) => series?.bookIds.includes(b.id))),
       reason: "series",
+      picked: false,
+      includes: (id) => !!series?.bookIds.includes(id),
       text: seriesText(seriesName, series),
       semantic: (q, max) => querySeriesBooks(seriesId, q, max),
       keyword: (words, max) => searchSeriesKeyword(seriesId, words, max),
@@ -245,6 +390,8 @@ export function buildScope(bookId: string, bookTitle: string, question: string):
     series: null,
     books: [focus],
     reason: "focus",
+    picked: false,
+    includes: (id) => id === bookId,
     text: bookText(bookId, bookTitle),
     semantic: async (q, max) => (await queryBook(bookId, q, max)).map((p) => ({ ...p, bookTitle })),
     keyword: (words, max) => searchBookKeyword(bookId, words, max).map((m) => ({ ...m, bookTitle })),

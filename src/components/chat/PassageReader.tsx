@@ -14,8 +14,15 @@ type PassagePayload = {
   bookTitle: string;
   position: string;
   text: string;
+  matchedBy?: "excerpt" | "label" | "start";
+  matchStart?: number;
+  matchLength?: number;
   neighbors: Array<{ position: string; preview: string }>;
 };
+
+function scrollToMark(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: "center" });
+}
 
 export default function PassageReader({
   target,
@@ -45,6 +52,8 @@ export default function PassageReader({
     if (target.bookId) params.set("bookId", target.bookId);
     params.set("book", target.book);
     if (target.position) params.set("position", target.position);
+    // The citation's own words find the page even when titles or labels have changed.
+    if (target.excerpt) params.set("excerpt", target.excerpt.slice(0, 400));
 
     fetch(`/api/passage?${params.toString()}`)
       .then(async (res) => {
@@ -79,6 +88,10 @@ export default function PassageReader({
   }, [target, onClose]);
 
   if (!target) return null;
+
+  const matchStart = data?.matchStart ?? -1;
+  const matchLength = data?.matchLength ?? 0;
+  const hasMatch = !!data && matchStart >= 0 && matchLength > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px]">
@@ -118,11 +131,26 @@ export default function PassageReader({
           {!loading && !error && data && (
             <article className="space-y-4">
               <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground/95">
-                {data.text}
+                {hasMatch ? (
+                  <>
+                    {data.text.slice(0, matchStart)}
+                    <mark
+                      ref={scrollToMark}
+                      className="rounded-sm bg-primary/20 px-0.5 text-foreground"
+                    >
+                      {data.text.slice(matchStart, matchStart + matchLength)}
+                    </mark>
+                    {data.text.slice(matchStart + matchLength)}
+                  </>
+                ) : (
+                  data.text
+                )}
               </p>
-              {target.excerpt && (
+              {target.excerpt && !hasMatch && (
                 <p className="text-[11px] text-muted">
-                  Matched from citation — scroll the chapter for full context.
+                  {data.matchedBy === "start"
+                    ? "Couldn’t place this citation; showing the start of the book."
+                    : "The cited words weren’t found word for word; showing the cited chapter."}
                 </p>
               )}
               {data.neighbors.length > 0 && (

@@ -13,6 +13,41 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Added — chat eval
+
+- `npm run eval:chat` runs the gold questions in `eval/chat-cases.json` through the real
+  pipeline and checks the route taken, the books read, the number of Claude calls, the
+  sources and (where the answer is real) what it says. Each case carries a note saying
+  which bug or behaviour it pins.
+- **Dry by default**: Claude calls are counted, not made, so routes, scope and every exact
+  answer are checked in seconds for the price of a few embeddings. `-- --live` makes the
+  calls and applies the text checks too; `-- id1 id2` runs single cases; `--json` prints
+  the full report. Dry runs never write the specialist cache or scorecards.
+- First run on the real library: 16/16, and it showed "Who is Joe in love with?" being
+  answered as a plain "who is Joe" lookup. Fixed: only a place may follow the name.
+
+### Added — choose what a question is asked against
+
+- **Scope chip above the question field**: "Asking the whole library · 18 books",
+  "Asking Paradise · named in your question" (updates as you type; catalog lookup only, no
+  AI call), "Asking 2 books: Columbus Day, Paradise · picked by you".
+- **Book picker** on the chip: tick books (or a whole series), filter by title. Nothing ticked
+  is the whole library, one book is a focus book, two or more are read together and nothing
+  else is: searches, exact counts, quotes and librarians all stay inside the pick.
+- Server: `bookIds` on `POST /api/chat` builds a picked `Scope`; `POST /api/chat/scope`
+  previews the scope; SCOPE reason `picked`.
+
+### Fixed — citations survive a retitle or relabel
+
+- The passage reader finds a citation by **the book's id, then the cited words, then the
+  label** (`chat/passage-lookup.ts`). Saved chats from before Tidy carry the old flow label
+  ("Chapter 12") and the old long title; the words still land on "Chapter 10 · Skippy".
+  "Chapter 1" no longer matches "Chapter 10".
+- The reader highlights the cited words and scrolls to them; when they can't be found word
+  for word it says so instead of silently showing the start of the book.
+- Every source sent to the UI carries `bookId`.
+- Picking a conversation closes the Past notes drawer.
+
 ### Changed — 2026-11-12 restructuring and cleanup
 
 - **Chat handler rebuilt** around a `Scope` and a step pipeline: `handler.ts` 1682 → 164 lines,

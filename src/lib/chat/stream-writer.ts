@@ -12,6 +12,30 @@ export interface StreamWriter {
   readonly closed: boolean;
 }
 
+/** A writer that keeps the lines instead of streaming them (in-process runs: the eval). */
+export function createCollectingWriter(): StreamWriter & { lines: string[] } {
+  const lines: string[] = [];
+  let closed = false;
+  return {
+    lines,
+    line: (type, payload) => {
+      if (!closed) lines.push(`${type}:${payload}`);
+    },
+    field: (type, data) => {
+      if (!closed) lines.push(encodeStreamField(type, data).replace(/\n$/, ""));
+    },
+    close() {
+      closed = true;
+    },
+    markClosed() {
+      closed = true;
+    },
+    get closed() {
+      return closed;
+    },
+  };
+}
+
 export function createStreamWriter(controller: ReadableStreamDefaultController<Uint8Array>): StreamWriter {
   const encoder = new TextEncoder();
   let closed = false;

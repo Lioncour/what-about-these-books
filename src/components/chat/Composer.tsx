@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, type ReactNode, type Ref } from "react";
 
 export interface ComposerHandle {
   focus: () => void;
@@ -15,6 +15,7 @@ export default function Composer({
   onStop,
   isLoading,
   placeholder,
+  above,
 }: {
   ref?: Ref<ComposerHandle>;
   value: string;
@@ -23,6 +24,8 @@ export default function Composer({
   onStop: () => void;
   isLoading: boolean;
   placeholder: string;
+  /** Sits right above the field (the scope chip). */
+  above?: ReactNode;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -37,7 +40,8 @@ export default function Composer({
   }, [value]);
 
   return (
-    <div className="composer-shell shrink-0 px-6 pb-5 pt-3 sm:px-10 lg:px-14">
+    <div className="composer-shell relative z-20 shrink-0 px-6 pb-5 pt-3 sm:px-10 lg:px-14">
+      {above && <div className="mx-auto w-full max-w-3xl">{above}</div>}
       <div className="mx-auto flex w-full max-w-3xl items-end gap-3">
         <textarea
           ref={textareaRef}

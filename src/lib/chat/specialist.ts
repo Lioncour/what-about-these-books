@@ -1,3 +1,4 @@
+import { DRY_RUN_TEXT, isDryRun } from "@/lib/chat/request-context";
 import { callClaudeText, extractJsonObject } from "@/lib/bedrock-claude";
 import { getEntityGraph } from "@/lib/knowledge-store";
 import {
@@ -191,6 +192,19 @@ export async function askBookSpecialist(params: {
       numericEstimate: typeof cached.numericEstimate === "number" ? cached.numericEstimate : null,
       findings: parseFindings(cached.findings),
       caveats: ["Served from specialist cache"],
+    };
+  }
+
+  if (isDryRun()) {
+    // Eval dry run: this librarian would be asked. Count the call; touch no cache or scorecard.
+    await callClaudeText("", 1, 0, modelId, { signal: params.signal });
+    return {
+      bookTitle: params.bookTitle,
+      confidence: "low",
+      directAnswer: DRY_RUN_TEXT,
+      numericEstimate: null,
+      findings: [],
+      caveats: ["Dry run"],
     };
   }
 

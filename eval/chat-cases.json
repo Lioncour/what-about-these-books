@@ -1,0 +1,132 @@
+[
+  {
+    "id": "count-named-book",
+    "question": "How many times is Skippy mentioned in Columbus Day?",
+    "note": "A count scopes to the book the question names (it used to count the whole library).",
+    "expect": {
+      "route": "mention_count",
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "maxClaudeCalls": 0,
+      "textIncludes": ["766"],
+      "sourcesInclude": ["Columbus Day"]
+    }
+  },
+  {
+    "id": "count-first-seven",
+    "question": "How many times is Skippy mentioned in the first 7 books?",
+    "note": "\"First N books\" follows series order and never estimates.",
+    "expect": {
+      "route": "mention_count",
+      "scopeReason": "series",
+      "scopeIncludes": ["Columbus Day", "Renegades"],
+      "scopeExcludes": ["Armageddon"],
+      "maxClaudeCalls": 0,
+      "textIncludes": ["6,881", "not an AI estimate"]
+    }
+  },
+  {
+    "id": "count-focus-book",
+    "question": "How many times is Skippy mentioned?",
+    "focus": "Paradise",
+    "expect": {
+      "route": "mention_count",
+      "scopeReason": "focus",
+      "scopeBooks": ["Paradise"],
+      "maxClaudeCalls": 0,
+      "textIncludes": ["886"]
+    }
+  },
+  {
+    "id": "count-picked-books",
+    "question": "How many times is Skippy mentioned?",
+    "books": ["Columbus Day", "Paradise"],
+    "note": "Hand-picked books: nothing outside the pick is counted.",
+    "expect": {
+      "route": "mention_count",
+      "scopeReason": "picked",
+      "scopeBooks": ["Columbus Day", "Paradise"],
+      "maxClaudeCalls": 0,
+      "textIncludes": ["1,652"]
+    }
+  },
+  {
+    "id": "not-a-count",
+    "question": "How often does Joe appear nervous?",
+    "note": "\"appear <adjective>\" is a reading question, not an exact count of \"Joe\".",
+    "expect": { "routeNot": ["mention_count"], "minClaudeCalls": 1 }
+  },
+  {
+    "id": "named-book-question",
+    "question": "In Columbus Day, how does Joe first meet Skippy?",
+    "note": "The reproduced bug: the librarians read books 2-7 and said they didn't have Columbus Day.",
+    "expect": {
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "minClaudeCalls": 1,
+      "maxClaudeCalls": 3,
+      "textIncludes": ["Ruhar"],
+      "textExcludes": ["don't have the actual text"]
+    }
+  },
+  {
+    "id": "they-is-not-hey",
+    "question": "Who are they fighting in Paradise?",
+    "note": "\"they\" matched the greeting \"hey\" and the question was answered from model memory.",
+    "expect": {
+      "routeNot": ["bypass_general"],
+      "scopeIncludes": ["Paradise"],
+      "minClaudeCalls": 1
+    }
+  },
+  {
+    "id": "short-plot-question",
+    "question": "Does Joe survive?",
+    "note": "Short questions without a keyword used to skip the books entirely.",
+    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1 }
+  },
+  {
+    "id": "greeting",
+    "question": "hey there",
+    "expect": { "route": "bypass_general", "scopeBooks": [], "maxClaudeCalls": 1 }
+  },
+  {
+    "id": "library-count",
+    "question": "How many books do I have?",
+    "expect": { "route": "library_count", "maxClaudeCalls": 1, "textIncludes": ["18"] }
+  },
+  {
+    "id": "which-books-mention",
+    "question": "Which books in my library mention Mars?",
+    "note": "Was answered with \"You have 18 books.\"",
+    "expect": { "routeNot": ["library_count"] }
+  },
+  {
+    "id": "who-is",
+    "question": "Who is Skippy?",
+    "expect": { "route": "who_is", "minSources": 1 }
+  },
+  {
+    "id": "who-is-with-tail",
+    "question": "Who is Joe in love with?",
+    "note": "A question about a person is read from the books, not answered as a \"who is Joe\" lookup.",
+    "expect": { "routeNot": ["who_is", "mention_count", "bypass_general"], "minClaudeCalls": 1 }
+  },
+  {
+    "id": "pop-culture-survey",
+    "question": "Any pop culture references in the books?",
+    "expect": { "route": "theme_pop_culture", "maxClaudeCalls": 0, "minSources": 1 }
+  },
+  {
+    "id": "references-to-a-thing",
+    "question": "Are there any references to Mars?",
+    "note": "\"references to\" alone used to return the Star Trek list.",
+    "expect": { "routeNot": ["theme_pop_culture"] }
+  },
+  {
+    "id": "quoted-phrase-is-a-question",
+    "question": "What does \"the Elders left the galaxy long ago\" mean for the plot?",
+    "note": "A quoted phrase inside a question is not a request to find the quote.",
+    "expect": { "routeNot": ["quote_lookup"], "minClaudeCalls": 1 }
+  }
+]
