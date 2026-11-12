@@ -14,6 +14,8 @@ interface RequestContext {
   usage: RequestUsage;
   /** Eval dry run: Claude calls are counted but not made. */
   dryRun?: boolean;
+  /** Eval run: answer from the books now, never from the specialist cache. */
+  fresh?: boolean;
 }
 
 /** What a skipped Claude call returns in a dry run. */
@@ -31,13 +33,27 @@ export function emptyUsage(): RequestUsage {
  * being passed along; code outside any request (ingest, reindex) sees none.
  */
 export function runWithRequestContext<T>(
-  context: { signal?: AbortSignal; usage?: RequestUsage; dryRun?: boolean },
+  context: { signal?: AbortSignal; usage?: RequestUsage; dryRun?: boolean; fresh?: boolean },
   fn: () => T
 ): T {
   return storage.run(
-    { signal: context.signal, usage: context.usage ?? emptyUsage(), dryRun: context.dryRun },
+    {
+      signal: context.signal,
+      usage: context.usage ?? emptyUsage(),
+      dryRun: context.dryRun,
+      fresh: context.fresh || context.dryRun,
+    },
     fn
   );
+}
+
+/**
+ * True when cached librarian answers must not be used: every eval run, dry or live.
+ * An eval measures what a question costs and says today; an answer cached last week
+ * would hide both.
+ */
+export function skipSpecialistCache(): boolean {
+  return storage.getStore()?.fresh === true;
 }
 
 /** True inside an eval dry run: plan the Claude calls, don't spend them. */

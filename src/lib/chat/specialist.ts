@@ -1,4 +1,4 @@
-import { DRY_RUN_TEXT, isDryRun } from "@/lib/chat/request-context";
+import { DRY_RUN_TEXT, isDryRun, skipSpecialistCache } from "@/lib/chat/request-context";
 import { callClaudeText, extractJsonObject } from "@/lib/bedrock-claude";
 import { getEntityGraph } from "@/lib/knowledge-store";
 import {
@@ -316,9 +316,9 @@ export async function askBookSpecialist(params: SpecialistRequest): Promise<Spec
     | (ReturnType<typeof getCachedSpecialistAnswer> & { findings?: unknown; numericEstimate?: unknown })
     | null;
   // Only entries that carry their findings are usable; older ones (no findings) are bypassed.
-  // A dry run plans as if nothing were cached, so its call counts don't depend on what
-  // was asked before.
-  if (!isDryRun() && cached && Array.isArray(cached.findings)) {
+  // An eval run (dry or live) asks as if nothing were cached, so its call counts and
+  // answers don't depend on what was asked before.
+  if (!skipSpecialistCache() && cached && Array.isArray(cached.findings)) {
     return {
       ...base,
       confidence: parseSpecialistConfidence(cached.confidence),

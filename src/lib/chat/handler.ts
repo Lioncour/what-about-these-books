@@ -73,13 +73,13 @@ async function runPipeline(
   input: ChatRequest,
   writer: StreamWriter,
   signal: AbortSignal,
-  opts: { dryRun?: boolean; onRoute?: (route: ChatRoute) => void } = {}
+  opts: { dryRun?: boolean; fresh?: boolean; onRoute?: (route: ChatRoute) => void } = {}
 ): Promise<void> {
   const startedAt = Date.now();
   const usage = emptyUsage();
   let ctx: ChatContext | null = null;
   try {
-    await runWithRequestContext({ signal, usage, dryRun: opts.dryRun }, async () => {
+    await runWithRequestContext({ signal, usage, dryRun: opts.dryRun, fresh: opts.fresh }, async () => {
       ctx = buildChatContext({ ...input, signal, writer });
       opts.onRoute?.(ctx.route);
       for (const step of PIPELINE) {
@@ -134,7 +134,8 @@ export async function runChatInProcess(
     },
     writer,
     opts.signal ?? new AbortController().signal,
-    { dryRun: opts.dryRun, onRoute: (r) => (route = r) }
+    // In-process runs are eval runs: never served from the librarian cache.
+    { dryRun: opts.dryRun, fresh: true, onRoute: (r) => (route = r) }
   );
   return { lines: writer.lines, route };
 }

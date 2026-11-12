@@ -7,11 +7,10 @@ changelog is the record).
 
 ## Next
 
-1. **Judge the cheaper librarian model.** Haiku is in use and the eval's fact checks pass,
-   but nobody has compared answers side by side. Save a live baseline
-   (`npm run eval:chat -- --live --save-baseline`, about 50 calls), switch the librarians
-   to Sonnet or the main model in Settings, run again and read the differences. Add text
-   checks to the cases where the answers diverge.
+1. **Answers that overstate their scope.** Asked "Does Joe survive?" with the whole
+   library in play, the answer says "across all three books you're asking about". The
+   reader asked about no books; the librarians chose three. The orchestrator prompt should
+   say which books were read ("in the three books I looked at") and offer to read more.
 2. **Entity graph, second pass.** Names are now found by evidence, but a place like
    "Thomson Corners" can still read as a person, and 1,085 names stay "unknown". Use the
    graph for more than main characters (who-is lookups, the scope chip), and consider one
@@ -34,6 +33,9 @@ changelog is the record).
 
 ## Later
 
+- Librarian model: measured 2026-11-13 (see the changelog). Haiku stays. Worth repeating
+  only if answers start missing facts, or with text checks on more eval cases, since
+  24 of 24 passing says little when most cases check routes and not content.
 - Installer size: vectra brings 93 dependencies (an OpenAI client, cheerio, …) that the
   app never calls, on top of `sharp` and the full AWS SDK. Check what the server really
   loads, or replace vectra with a small local index.

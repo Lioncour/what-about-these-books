@@ -13,6 +13,29 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Measured — Haiku librarians against Sonnet (2026-11-13)
+
+The full eval run live twice on the real library, librarians on Haiku 4.5 and on
+Sonnet 4.5, final answers on Opus both times:
+
+| Librarians | Passed | Calls | Tokens in | Tokens out | Time |
+|---|---|---|---|---|---|
+| Haiku 4.5 | 24/24 | 53 | 242k | 30k | 236 s |
+| Sonnet 4.5 | 24/24 | 49 | 211k | 30k | 320 s |
+
+The answers read the same: same books, same facts, same quotes, because the librarians
+only gather findings and Opus writes the answer. Haiku came back thin twice where Sonnet
+did not, so those questions read three more books (7 calls instead of 4); that is the
+whole difference in calls. Haiku is about a quarter faster and several times cheaper per
+token, so **Haiku stays the default**. The Haiku run is saved as `eval/baseline-live.json`.
+
+Fixed on the way:
+
+- **Eval runs never use the librarian cache.** A live run was answered from yesterday's
+  cache (14 calls instead of 53), which hides both cost and today's answers.
+- **The eval script no longer gives up after five minutes.** A full live run takes longer
+  than `fetch` waits for a first byte; the result was lost after the tokens were spent.
+
 ### Changed — the cast is people, and eval runs remember the last one
 
 - **Entity graph rebuilt on better evidence** (`src/lib/knowledge-extract.ts`, no AI call).

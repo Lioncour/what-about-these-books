@@ -1,0 +1,221 @@
+{
+  "mode": "live",
+  "cases": {
+    "count-named-book": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "count-first-seven": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "series",
+      "books": 7,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "count-focus-book": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "focus",
+      "books": 1,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "count-picked-books": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "picked",
+      "books": 2,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "count-follow-up": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "not-a-count": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 6,
+      "claudeCalls": 7,
+      "inputTokens": 31239,
+      "outputTokens": 3977
+    },
+    "named-book-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 10516,
+      "outputTokens": 1078
+    },
+    "they-is-not-hey": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 10863,
+      "outputTokens": 1379
+    },
+    "short-plot-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 12888,
+      "outputTokens": 2123
+    },
+    "open-question-first-wave": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 16689,
+      "outputTokens": 2714
+    },
+    "breadth-question-reads-wide": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 6,
+      "claudeCalls": 7,
+      "inputTokens": 33603,
+      "outputTokens": 4741
+    },
+    "greeting": {
+      "passed": true,
+      "route": "bypass_general",
+      "scopeReason": "all",
+      "books": 0,
+      "claudeCalls": 1,
+      "inputTokens": 71,
+      "outputTokens": 48
+    },
+    "library-count": {
+      "passed": true,
+      "route": "library_count",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 178,
+      "outputTokens": 38
+    },
+    "which-books-mention": {
+      "passed": true,
+      "route": "books_mentioning",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "who-is": {
+      "passed": true,
+      "route": "who_is",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 2002,
+      "outputTokens": 337
+    },
+    "who-is-with-tail": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 12671,
+      "outputTokens": 2056
+    },
+    "pop-culture-survey": {
+      "passed": true,
+      "route": "theme_pop_culture",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "references-to-a-thing": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 5,
+      "inputTokens": 24839,
+      "outputTokens": 1522
+    },
+    "quoted-phrase-is-a-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 16835,
+      "outputTokens": 3016
+    },
+    "series-main-characters": {
+      "passed": true,
+      "route": "main_characters",
+      "scopeReason": "series",
+      "books": 18,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "series-open-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "series",
+      "books": 6,
+      "claudeCalls": 7,
+      "inputTokens": 53476,
+      "outputTokens": 5001
+    },
+    "recipe-named-dish": {
+      "passed": true,
+      "route": "passage_find",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "recipe-how-do-you-make": {
+      "passed": true,
+      "route": "passage_find",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "how-do-you-make-is-a-question": {
+      "passed": true,
+      "route": "passage_find",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 16514,
+      "outputTokens": 2384
+    }
+  }
+}

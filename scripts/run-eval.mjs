@@ -14,6 +14,7 @@
 // calls and, for live runs, a clear change in tokens.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compareWithBaseline, mergeBaseline, toBaseline } from "./eval-baseline.mjs";
@@ -25,15 +26,47 @@ const chat = flag("--chat");
 const live = flag("--live");
 const ids = args.filter((a) => !a.startsWith("--"));
 
+/**
+ * POST without a response timeout. A live run of every case takes minutes before the
+ * first byte comes back, and fetch gives up after five (then the run's result is lost
+ * although the server finished and the tokens were spent).
+ */
+function postJson(url, body) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const payload = JSON.stringify(body);
+    const req = http.request(
+      {
+        host: target.hostname,
+        port: target.port || 80,
+        path: target.pathname + target.search,
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
+      },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (text += d));
+        res.on("end", () =>
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            statusText: res.statusMessage || "",
+            text: async () => text,
+            json: async () => JSON.parse(text),
+          })
+        );
+      }
+    );
+    req.setTimeout(0);
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+
 let res;
 try {
-  res = chat
-    ? await fetch(base, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ live, ids }),
-      })
-    : await fetch(base);
+  res = chat ? await postJson(base, { live, ids }) : await fetch(base);
 } catch (error) {
   const why = error.cause?.code || error.message;
   console.error(`Eval skipped: no server at ${base} (${why}). Start the app (npm run dev:web) or set EVAL_URL.`);
