@@ -83,6 +83,7 @@ vi.mock("@/lib/knowledge-store", async () => {
   };
 });
 
+vi.mock("@/lib/knowledge-rebuild", () => ({ ensureKnowledgeCurrent: vi.fn(() => 0) }));
 vi.mock("@/lib/quality-store", () => ({
   fingerprintQuestion: (bookId: string, question: string) => `${bookId}::${question}`,
   getCachedSpecialistAnswer: vi.fn(() => null),

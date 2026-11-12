@@ -4,6 +4,7 @@ import { claudeNaturalAnswer } from "@/lib/chat/orchestrator";
 import { matchToSource } from "@/lib/chat/scope";
 import { deriveMainCharacters } from "@/lib/chat/specialist";
 import type { ChatSource } from "@/lib/chat/types";
+import { ensureKnowledgeCurrent } from "@/lib/knowledge-rebuild";
 
 /** "Who are the main characters?" — from entity prominence in the knowledge graph. */
 export async function mainCharactersStep(ctx: ChatContext): Promise<boolean> {
@@ -11,6 +12,8 @@ export async function mainCharactersStep(ctx: ChatContext): Promise<boolean> {
 
   const { scope } = ctx;
   const copy = scope.text.mainCharacters;
+  // A graph from an older extraction is rebuilt from the stored text first (once).
+  if (ensureKnowledgeCurrent() > 0) logChatEvent("knowledge_rebuilt", { reason: "main_characters" });
   const mains = deriveMainCharacters(scope.books.map((b) => b.id));
   const lines: string[] = [];
   const sources: ChatSource[] = [];

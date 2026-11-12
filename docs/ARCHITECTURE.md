@@ -89,7 +89,7 @@ Default root: **`~/.whataboutthisbook/`** (override with `DATA_DIR`).
 | `covers/` | Cover images |
 | `specialists/` | Per-book “librarian memory” profiles |
 | `chats/` | Saved conversations |
-| `knowledge/` | Entity graph + timeline heuristics |
+| `knowledge/` | Entity graph (people, groups, places found by `knowledge-extract.ts`) + timeline heuristics; rebuilt from `texts/` when the extraction version changes |
 | `quality/` | Specialist cache + scorecards |
 | `ops/` | Shares, workspace notes, reindex state |
 | `backups/` | Snapshots |

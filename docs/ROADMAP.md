@@ -7,14 +7,15 @@ changelog is the record).
 
 ## Next
 
-1. **Entity graph quality.** The eval showed "The / That / You" as main characters; they
-   are filtered at read time now, but `knowledge-store.ts` still extracts noisy entities
-   at ingest ("Kristang" as a character). Extract names with better rules (or one cheap
-   Haiku pass per book at ingest) and rebuild the graph for existing books.
-2. **Live eval as a habit.** `npm run eval:chat -- --live` works; add a saved baseline
-   (cost and pass/fail per case) and print the difference, so a prompt or model change
-   shows what it did. Then tune the first wave (3 books) and the librarian model
-   (Haiku vs Sonnet) against answer quality, not just cost.
+1. **Judge the cheaper librarian model.** Haiku is in use and the eval's fact checks pass,
+   but nobody has compared answers side by side. Save a live baseline
+   (`npm run eval:chat -- --live --save-baseline`, about 50 calls), switch the librarians
+   to Sonnet or the main model in Settings, run again and read the differences. Add text
+   checks to the cases where the answers diverge.
+2. **Entity graph, second pass.** Names are now found by evidence, but a place like
+   "Thomson Corners" can still read as a person, and 1,085 names stay "unknown". Use the
+   graph for more than main characters (who-is lookups, the scope chip), and consider one
+   Haiku pass per book at ingest for the top 50 names.
 3. **Installer on a clean machine.** The packaged app passes the smoke test here, where
    Node, AWS CLI and a library already exist. Install `dist/What About This Book Setup`
    on a machine without them and walk the first-run path (AWS profile dialog, empty

@@ -7,6 +7,16 @@
 //   npm run eval:chat -- --live     chat eval with real Claude calls (costs tokens)
 //   npm run eval:chat -- id1 id2    only these cases
 //   ... --json                      print the full report as JSON
+//   ... --save-baseline             remember this run (eval/baseline-dry.json or -live.json)
+//
+// When a baseline for the mode exists, every chat run ends with what changed against it:
+// cases that pass or fail differently, a different route or scope, more or fewer Claude
+// calls and, for live runs, a clear change in tokens.
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { compareWithBaseline, mergeBaseline, toBaseline } from "./eval-baseline.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -56,4 +66,25 @@ if (!chat || flag("--json")) {
     : `${report.claudeCalls} Claude calls planned, none made`;
   console.log(`\n${report.passed}/${report.total} passed (${report.mode}) · ${total} · ${(report.ms / 1000).toFixed(1)} s`);
 }
+if (chat && Array.isArray(report.results)) {
+  const file = join(dirname(fileURLToPath(import.meta.url)), "..", "eval", `baseline-${report.mode}.json`);
+  let baseline = null;
+  try {
+    if (existsSync(file)) baseline = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    console.error(`Could not read ${file}; ignoring it.`);
+  }
+  if (!flag("--json")) {
+    const diff = compareWithBaseline(report, baseline);
+    if (diff.lines.length) console.log(`\n${diff.lines.join("\n")}`);
+    else if (!flag("--save-baseline")) {
+      console.log("\nNo baseline for this mode yet. Add --save-baseline to keep this run as one.");
+    }
+  }
+  if (flag("--save-baseline")) {
+    writeFileSync(file, JSON.stringify(mergeBaseline(baseline, toBaseline(report)), null, 2) + "\n");
+    console.log(`Saved ${ids.length ? `${report.results.length} case(s) into` : "this run as"} eval/baseline-${report.mode}.json`);
+  }
+}
+
 if (report.failed > 0) process.exitCode = 2;

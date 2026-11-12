@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { detectChronologyConflicts, getEntityGraph, getTimelineForBooks, queryEntityGraph } from "@/lib/knowledge-store";
 import { listBooks, searchBookKeyword } from "@/lib/book-store";
+import { ensureKnowledgeCurrent, rebuildKnowledgeForLibrary } from "@/lib/knowledge-rebuild";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 function detectCrossBookContradictions(entity: string): string[] {
   const books = listBooks();
@@ -26,6 +28,7 @@ export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q") || "";
   const bookIds = request.nextUrl.searchParams.get("bookIds")?.split(",").filter(Boolean);
   const character = request.nextUrl.searchParams.get("character") || "";
+  ensureKnowledgeCurrent();
 
   if (mode === "character" && character.trim()) {
     const graph = queryEntityGraph(character.trim());
@@ -65,4 +68,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(queryEntityGraph(query));
   }
   return NextResponse.json(getEntityGraph());
+}
+
+/** `{ "action": "rebuild" }`: rebuild the entity graph and timeline from the stored text. */
+export async function POST(request: NextRequest) {
+  const blocked = publicModeBlocked("Rebuilding the knowledge graph");
+  if (blocked) return blocked;
+  const body = (await request.json().catch(() => ({}))) as { action?: unknown };
+  if (body.action !== "rebuild") {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
+  const started = Date.now();
+  const books = rebuildKnowledgeForLibrary();
+  const graph = getEntityGraph();
+  return NextResponse.json({ books, nodes: graph.nodes.length, edges: graph.edges.length, ms: Date.now() - started });
 }

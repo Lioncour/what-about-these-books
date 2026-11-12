@@ -48,13 +48,25 @@ export function deriveMainCharacters(bookIds: string[]): { name: string; mention
   const inScope = new Set(bookIds);
   // The graph holds one node per name and book; a character is the sum of its nodes.
   const byName = new Map<string, { name: string; mentions: number; books: Set<string> }>();
+  // "Bishop" in one book is "Joe Bishop" in another: a short form counts towards the
+  // full name it is an alias of, when only one full name claims it.
+  const fullNameOf = new Map<string, string | null>();
+  for (const n of graph.nodes) {
+    if (n.type !== "character" || !n.books.some((b: string) => inScope.has(b))) continue;
+    for (const alias of n.aliases || []) {
+      const key = alias.toLowerCase();
+      const seen = fullNameOf.get(key);
+      fullNameOf.set(key, seen === undefined || seen === n.name ? n.name : null);
+    }
+  }
   for (const n of graph.nodes) {
     if (n.type !== "character" || n.mentions < 2) continue;
     const books = n.books.filter((b: string) => inScope.has(b));
     if (!books.length) continue;
-    const key = n.name.toLowerCase();
+    const displayName = fullNameOf.get(n.name.toLowerCase()) || n.name;
+    const key = displayName.toLowerCase();
     if (NOT_A_NAME.has(key)) continue;
-    const row = byName.get(key) || { name: n.name, mentions: 0, books: new Set<string>() };
+    const row = byName.get(key) || { name: displayName, mentions: 0, books: new Set<string>() };
     row.mentions += n.mentions;
     for (const b of books) row.books.add(b);
     byName.set(key, row);

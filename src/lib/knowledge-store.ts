@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { BookPage } from "@/lib/book-store";
+import { entityFinder, extractBookEntities } from "@/lib/knowledge-extract";
 import { DATA_DIR, ensureDir, ensureDataDir, writeJsonAtomic } from "@/lib/runtime-config";
 
 const KNOWLEDGE_DIR = join(DATA_DIR, "knowledge");
@@ -13,6 +14,8 @@ export interface EntityNode {
   type: "character" | "place" | "faction" | "event" | "unknown";
   mentions: number;
   books: string[];
+  /** Other forms of the name counted into this node ("Joe", "Bishop" for "Joe Bishop"). */
+  aliases?: string[];
 }
 
 export interface EntityEdge {
@@ -38,15 +41,13 @@ interface EntityGraphStore {
   nodes: EntityNode[];
   edges: EntityEdge[];
   updatedAt: string;
+  /** Extraction version that built this graph (absent: 1). */
+  version?: number;
 }
 
 interface TimelineStore {
   events: TimelineEvent[];
   updatedAt: string;
-}
-
-function normalizeEntity(raw: string): string {
-  return raw.replace(/[^A-Za-z0-9\s'-]/g, "").trim();
 }
 
 function ensureKnowledgeDir(): void {
@@ -89,22 +90,12 @@ function saveTimeline(timeline: TimelineStore): void {
 const MAX_EDGES_PER_PAGE = 8;
 const MAX_EVIDENCE_CHARS = 160;
 
-function classifyEntity(name: string): EntityNode["type"] {
-  const lower = name.toLowerCase();
-  if (/(kingdom|fleet|empire|force|alliance|army|clan)/i.test(lower)) return "faction";
-  if (/(planet|city|station|base|earth|mars|moon)/i.test(lower)) return "place";
-  return "character";
-}
-
-function extractEntitiesFromText(text: string): string[] {
-  const matches = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g) || [];
-  const uniq = new Set<string>();
-  for (const m of matches) {
-    const cleaned = normalizeEntity(m);
-    if (cleaned.length >= 3 && cleaned.length <= 40) uniq.add(cleaned);
-  }
-  return [...uniq].slice(0, 40);
-}
+/**
+ * Bump when the extraction changes: graphs built by an older version are rebuilt from
+ * the stored text the next time they are read (see knowledge-rebuild.ts).
+ * 2: names by mid-sentence capitals and context instead of every capitalised word.
+ */
+export const KNOWLEDGE_VERSION = 2;
 
 function extractEventSentences(text: string): string[] {
   const sentences = text
@@ -117,55 +108,46 @@ function extractEventSentences(text: string): string[] {
   return eventy.slice(0, 20);
 }
 
-export function rebuildKnowledgeForBook(
+/** Replace one book's nodes, edges and events in the given stores (not saved here). */
+function rebuildInto(
+  graph: EntityGraphStore,
+  timeline: TimelineStore,
   params: { bookId: string; bookTitle: string; pages: BookPage[] }
 ): void {
   const { bookId, bookTitle, pages } = params;
-  const graph = loadGraph();
-  const timeline = loadTimeline();
-
   graph.nodes = graph.nodes.filter((n) => !n.books.includes(bookId));
   graph.edges = graph.edges.filter((e) => e.bookId !== bookId);
   timeline.events = timeline.events.filter((e) => e.bookId !== bookId);
 
-  const nodeMap = new Map<string, EntityNode>();
+  const entities = extractBookEntities(pages);
+  const find = entityFinder(entities);
+  for (const entity of entities) {
+    graph.nodes.push({
+      id: entity.name.toLowerCase(),
+      name: entity.name,
+      type: entity.type,
+      mentions: entity.mentions,
+      books: [bookId],
+      ...(entity.aliases.length ? { aliases: entity.aliases } : {}),
+    });
+  }
+
   let sequence = 0;
-
   for (const page of pages) {
-    const entities = extractEntitiesFromText(page.text);
-    for (const entity of entities) {
-      const key = entity.toLowerCase();
-      const existing = nodeMap.get(key) || {
-        id: key,
-        name: entity,
-        type: classifyEntity(entity),
-        mentions: 0,
-        books: [],
-      };
-      existing.mentions += 1;
-      if (!existing.books.includes(bookId)) existing.books.push(bookId);
-      nodeMap.set(key, existing);
-    }
-
+    const onPage = find(page.text);
     const evidence = page.text.slice(0, MAX_EVIDENCE_CHARS).replace(/\s+/g, " ").trim();
-    let pageEdges = 0;
-    for (let i = 0; i < entities.length - 1 && pageEdges < MAX_EDGES_PER_PAGE; i++) {
-      const a = entities[i]?.toLowerCase();
-      const b = entities[i + 1]?.toLowerCase();
-      if (!a || !b || a === b) continue;
+    for (let i = 0; i < onPage.length - 1 && i < MAX_EDGES_PER_PAGE; i++) {
       graph.edges.push({
-        from: a,
-        to: b,
+        from: onPage[i].toLowerCase(),
+        to: onPage[i + 1].toLowerCase(),
         relation: "co-mentioned",
         bookId,
         location: page.label,
         evidence,
       });
-      pageEdges++;
     }
 
-    const events = extractEventSentences(page.text);
-    for (const event of events) {
+    for (const event of extractEventSentences(page.text)) {
       sequence++;
       timeline.events.push({
         id: `${bookId}-${sequence}`,
@@ -174,16 +156,49 @@ export function rebuildKnowledgeForBook(
         location: page.label,
         sequence,
         text: event,
-        entities: extractEntitiesFromText(event).map((e) => e.toLowerCase()),
+        entities: find(event).map((e) => e.toLowerCase()),
       });
     }
   }
+}
 
-  graph.nodes.push(...nodeMap.values());
+export function rebuildKnowledgeForBook(
+  params: { bookId: string; bookTitle: string; pages: BookPage[] }
+): void {
+  rebuildKnowledgeForBooks([params], { keepVersion: true });
+}
+
+/**
+ * Rebuild several books with one read and one write of the stores. A full-library
+ * rebuild stamps the current version; a single upload keeps whatever version the
+ * stores have, so an outdated graph is still rebuilt as a whole later.
+ */
+export function rebuildKnowledgeForBooks(
+  books: Array<{ bookId: string; bookTitle: string; pages: BookPage[] }>,
+  opts: { keepVersion?: boolean; replaceAll?: boolean } = {}
+): void {
+  const graph = loadGraph();
+  const timeline = loadTimeline();
+  if (opts.replaceAll) {
+    // A library rebuild starts from nothing, so entries of books that no longer exist
+    // (removed before deletes cleaned up after themselves) don't linger.
+    graph.nodes = [];
+    graph.edges = [];
+    timeline.events = [];
+  }
+  const fresh = graph.nodes.length === 0 && graph.edges.length === 0;
+  for (const book of books) rebuildInto(graph, timeline, book);
+  if (!opts.keepVersion || fresh) graph.version = KNOWLEDGE_VERSION;
   graph.updatedAt = new Date().toISOString();
   timeline.updatedAt = new Date().toISOString();
   saveGraph(graph);
   saveTimeline(timeline);
+}
+
+/** True when the stored graph was built by the current extraction (or holds nothing). */
+export function isKnowledgeCurrent(): boolean {
+  const graph = loadGraph();
+  return (graph.version ?? 1) >= KNOWLEDGE_VERSION || (graph.nodes.length === 0 && graph.edges.length === 0);
 }
 
 /** Remove a deleted book's nodes (or its membership in shared nodes), edges and timeline events. */
@@ -214,7 +229,9 @@ export function getEntityGraph(): EntityGraphStore {
 export function queryEntityGraph(query: string): { nodes: EntityNode[]; edges: EntityEdge[] } {
   const q = query.toLowerCase();
   const graph = loadGraph();
-  const nodes = graph.nodes.filter((n) => n.name.toLowerCase().includes(q)).slice(0, 30);
+  const nodes = graph.nodes
+    .filter((n) => n.name.toLowerCase().includes(q) || n.aliases?.some((a) => a.toLowerCase().includes(q)))
+    .slice(0, 30);
   const nodeSet = new Set(nodes.map((n) => n.id));
   const edges = graph.edges.filter((e) => nodeSet.has(e.from) || nodeSet.has(e.to)).slice(0, 60);
   return { nodes, edges };

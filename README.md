@@ -71,7 +71,7 @@ On first launch, edit `%USERPROFILE%\.whataboutthisbook\.env` (created automatic
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run eval:harness` | Retrieval quality eval (`eval/gold-questions.json`) |
-| `npm run eval:chat` | Chat eval (`eval/chat-cases.json`): routes, books read, cost; add `-- --live` for real answers |
+| `npm run eval:chat` | Chat eval (`eval/chat-cases.json`): routes, books read, cost; `-- --live` for real answers, `-- --save-baseline` to keep the run and compare later ones |
 | `npm test` | Unit tests (vitest) |
 | `npm run smoke` | Launch the desktop app and check port, window, API and quit (`-- --prod`, `-- --packaged`, `-- --busy-port`) |
 

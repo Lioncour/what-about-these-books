@@ -162,14 +162,14 @@
     "id": "series-main-characters",
     "question": "Who are the main characters?",
     "series": "Expeditionary Force",
-    "note": "A series in focus: the answer is drawn from the series' books, from the character graph, without librarians.",
+    "note": "A series in focus: answered from the character graph, without librarians. People only: full names, no sentence starters, no species.",
     "expect": {
       "route": "main_characters",
       "scopeReason": "series",
       "scopeIncludes": ["Columbus Day"],
-      "maxClaudeCalls": 1,
-      "textIncludes": ["**Skippy**", "**Joe**"],
-      "textExcludes": ["**The**", "**That**", "**You**"]
+      "maxClaudeCalls": 0,
+      "textIncludes": ["**Skippy**", "**Joe Bishop**"],
+      "textExcludes": ["**The**", "**That**", "**You**", "**Kristang**", "**Ruhar**"]
     }
   },
   {

@@ -13,6 +13,25 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Changed — the cast is people, and eval runs remember the last one
+
+- **Entity graph rebuilt on better evidence** (`src/lib/knowledge-extract.ts`, no AI call).
+  A capitalised word counts as a name only where a sentence start doesn't explain the
+  capital and the word isn't mostly written in lower case. What a name is comes from its
+  surroundings across the book: speech verbs and titles make a person, "the X" a group or
+  ship, a preposition a place. First and last names fold into the full name ("Joe",
+  "Bishop" → "Joe Bishop"), within a book and across books. On the real library: 713
+  people instead of ~12,000 "characters", the Kristang and Ruhar are groups, Earth and
+  Paradise places, and the graph file went from 15 MB to 2.3 MB.
+- Graphs from the old extraction are rebuilt from the stored text the first time they are
+  read (about a second for 18 books); `POST /api/knowledge {"action":"rebuild"}` does it on
+  request. A library rebuild starts from nothing, which also drops entries of books that
+  were removed long ago.
+- **Eval baseline**: `npm run eval:chat -- --save-baseline` keeps a run
+  (`eval/baseline-dry.json`, `-live.json`); every later run ends with what changed against
+  it: a pass that now fails, a different route or scope, more or fewer Claude calls and,
+  live, a clear change in tokens. The dry baseline is committed.
+
 ### Fixed — the desktop app and its installer (first real launch since the review)
 
 A smoke test that launches Electron for real (`npm run smoke`, also in CI) found five
