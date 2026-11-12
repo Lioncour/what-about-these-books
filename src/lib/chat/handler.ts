@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { DEFAULT_BEDROCK_MODEL_ID } from "@/lib/bedrock-client";
+import { DEFAULT_BEDROCK_MODEL_ID, isAbortError } from "@/lib/bedrock-client";
 import {
   queryBook,
   queryAllBooks,
@@ -20,27 +20,24 @@ import {
 import { logChatEvent } from "@/lib/chat-debug";
 import { detectChronologyConflicts, queryEntityGraph } from "@/lib/knowledge-store";
 import { callClaudeText, callClaudeStream } from "@/lib/bedrock-claude";
-import { getLibrarianName } from "@/lib/chat/constants";
+import { assignLibrarianNames, getLibrarianName } from "@/lib/chat/constants";
 import { RESPONSE_FORMATTING_RULES, buildPersonalityInstructions, voicePreamble } from "@/lib/chat/response-formatting";
 import { presenceStatus } from "@/lib/chat/presence";
 import { encodeStreamField } from "@/lib/chat/stream-protocol";
 import {
-  selectBooksForLibrarySpecialists,
+  findNamedBooksInQuestion,
+  seedPassagesByTitle,
+  selectLibrarySpecialists,
   selectBooksForSeriesSpecialists,
 } from "@/lib/chat/specialist-limits";
 import type { ChatMessage, ChatSource } from "@/lib/chat/types";
 import {
-  extractQuotedText,
+  resolveQuoteMode,
   looksLikeQuoteLookup,
+  extractKeywords,
   extractMentionCountTarget,
   resolveCountTarget,
-  looksLikeMentionCountQuestion,
-  looksLikeMainCharacterQuestion,
-  extractWhoIsTarget,
-  shouldBypassSpecialists,
   extractRetryQuestion,
-  looksLikeLibraryCountQuestion,
-  looksLikeHaveYouReadQuestion,
   buildRecentConversation,
   normalizeUserQuestion,
   extractBookCountScope,
@@ -85,6 +82,10 @@ import {
 
 export const maxDuration = 120;
 
+/** Keyword snippets appended to a RAG prompt, and sources sent per answer. */
+const MAX_KEYWORD_SNIPPETS = 40;
+const MAX_SOURCES_PER_ANSWER = 40;
+
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
 
@@ -113,21 +114,63 @@ export async function POST(request: NextRequest) {
       lastUserMessage: lastUserMessage.content.slice(0, 300),
     });
 
+    // One abort signal for the whole pipeline: the client's Stop (request.signal) or the
+    // stream being cancelled stops every Bedrock call still in flight.
+    const abort = new AbortController();
+    const signal = abort.signal;
+    const onRequestAbort = () => abort.abort();
+    if (request.signal.aborted) abort.abort();
+    else request.signal.addEventListener("abort", onRequestAbort, { once: true });
+    let closed = false;
+
     const readable = new ReadableStream({
+      cancel() {
+        closed = true;
+        abort.abort();
+      },
       async start(controller) {
         let companionMode = true;
+        // After close/cancel every enqueue is a no-op (never throw inside the catch block).
+        const enqueue = (line: string) => {
+          if (closed) return;
+          try {
+            controller.enqueue(encoder.encode(line));
+          } catch {
+            closed = true;
+          }
+        };
+        const finish = () => {
+          request.signal.removeEventListener("abort", onRequestAbort);
+          if (closed) return;
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+        };
         const send = (type: string, data: string) => {
+          if (type === "ERROR") {
+            enqueue(encodeStreamField("ERROR", data));
+            return;
+          }
           const payload = type === "STATUS" ? presenceStatus(data, companionMode) : data;
-          controller.enqueue(encoder.encode(`${type}:${payload}\n`));
+          enqueue(`${type}:${payload}\n`);
         };
         const emitToken = (delta: string) => {
           if (!delta) return;
-          controller.enqueue(encoder.encode(encodeStreamField("TOKEN", delta)));
+          enqueue(encodeStreamField("TOKEN", delta));
+        };
+        const sendSources = (rows: ChatSource[]) => {
+          if (rows.length) send("SOURCES", JSON.stringify(rows.slice(0, MAX_SOURCES_PER_ANSWER)));
+        };
+        const checkpoint = () => {
+          signal.throwIfAborted();
         };
 
         try {
           const emitAnswer = (text: string, meta?: Record<string, unknown>) => {
-            controller.enqueue(encoder.encode(encodeStreamField("TEXT", text)));
+            enqueue(encodeStreamField("TEXT", text));
             logChatEvent("chat_answer_emitted", {
               bookId,
               chars: text.length,
@@ -213,7 +256,7 @@ export async function POST(request: NextRequest) {
           );
           if (libraryCommand) {
             await runLibraryCommand(libraryCommand);
-            controller.close();
+            finish();
             return;
           }
 
@@ -229,6 +272,7 @@ export async function POST(request: NextRequest) {
             usesTool: route.usesTool,
             target: route.target || null,
           });
+          checkpoint();
 
           const forceExactCount = route.kind === "mention_count";
 
@@ -281,8 +325,8 @@ export async function POST(request: NextRequest) {
                 earlyGate: true,
               });
               emitAnswer(text, { reason: "exact_mention_count", scope: "series" });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
@@ -313,17 +357,30 @@ export async function POST(request: NextRequest) {
                 earlyGate: true,
               });
               emitAnswer(text, { reason: "exact_mention_count", scope: "book" });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
-            send("STATUS", `Counting exact mentions of "${mentionTarget}" across your library...`);
-            const byBookRows = countAllBooksKeywordMentions(mentionTarget, countMode);
+            // "How many times is X mentioned in Columbus Day?" counts only the
+            // books named in the question; otherwise the whole library.
+            const namedForCount = findNamedBooksInQuestion(questionText);
+            const namedIds = new Set(namedForCount.map((b) => b.id));
+            const countScopeLabel = namedForCount.length
+              ? `in ${namedForCount.map((b) => cleanBookDisplayTitle(b.title)).join(", ")}`
+              : "across your library";
+            send("STATUS", `Counting exact mentions of "${mentionTarget}" ${countScopeLabel}...`);
+            const byBookRows = countAllBooksKeywordMentions(mentionTarget, countMode).filter(
+              (r) => !namedIds.size || namedIds.has(r.bookId)
+            );
             const total = byBookRows.reduce((sum, r) => sum + r.count, 0);
             const byBook = byBookRows.map((r) => [r.bookTitle, r.count] as [string, number]);
-            const mentionMatches = searchAllBooksKeyword([mentionTarget], 40);
-            for (const m of mentionMatches) {
+            const mentionMatches = namedForCount.length
+              ? namedForCount.flatMap((b) =>
+                  searchBookKeyword(b.id, [mentionTarget], 40).map((m) => ({ ...m, bookTitle: b.title }))
+                )
+              : searchAllBooksKeyword([mentionTarget], 40);
+            for (const m of mentionMatches.slice(0, 40)) {
               sources.push({
                 book: m.bookTitle,
                 excerpt: m.snippet,
@@ -334,7 +391,7 @@ export async function POST(request: NextRequest) {
               target: mentionTarget,
               total,
               byBook,
-              scopeLabel: "across your library",
+              scopeLabel: countScopeLabel,
               countMode,
             });
             logChatEvent("mention_count_answered", {
@@ -346,8 +403,8 @@ export async function POST(request: NextRequest) {
               earlyGate: true,
             });
             emitAnswer(text, { reason: "exact_mention_count", scope: "all" });
-            if (sources.length) send("SOURCES", JSON.stringify(sources));
-            controller.close();
+            sendSources(sources);
+            finish();
             return;
           }
 
@@ -360,7 +417,7 @@ export async function POST(request: NextRequest) {
               input: questionText.slice(0, 180),
               earlyGate: true,
             });
-            controller.close();
+            finish();
             return;
           }
 
@@ -392,8 +449,8 @@ export async function POST(request: NextRequest) {
             });
             emitAnswer(text, { reason: "passage_find", hits: hits.length });
             const uniqueSources = dedupeSources(sources);
-            if (uniqueSources.length) send("SOURCES", JSON.stringify(uniqueSources));
-            controller.close();
+            sendSources(uniqueSources);
+            finish();
             return;
           }
 
@@ -412,8 +469,8 @@ export async function POST(request: NextRequest) {
               route: route.kind,
             });
             emitAnswer(text, { reason: "theme_survey_pop_culture", hits: hits.length });
-            if (themeSources.length) send("SOURCES", JSON.stringify(themeSources));
-            controller.close();
+            sendSources(themeSources);
+            finish();
             return;
           }
 
@@ -435,17 +492,6 @@ export async function POST(request: NextRequest) {
             route: route.kind,
             retryStep: retryQuestion?.step || null,
           });
-          if (route.kind === "mention_count" && !mentionTarget) {
-            emitAnswer("I can count mentions exactly in your indexed text — who should I count?", {
-              reason: "missing_mention_target",
-            });
-            logChatEvent("mention_count_missing_target", {
-              bookId,
-              input: questionText.slice(0, 180),
-            });
-            controller.close();
-            return;
-          }
 
           if (route.kind === "entity_graph" || /entity graph|relationship graph|who is connected/i.test(questionText)) {
             const graph = queryEntityGraph(questionText.replace(/entity graph|relationship graph/gi, "").trim());
@@ -455,7 +501,7 @@ export async function POST(request: NextRequest) {
               lines.push(`- **${node.name}** (${node.type}) mentions: ${node.mentions}`);
             }
             emitAnswer(lines.join("\n"), { reason: "entity_graph" });
-            controller.close();
+            finish();
             return;
           }
           if (/timeline conflict|chronology conflict|timeline issue/i.test(questionText)) {
@@ -464,36 +510,36 @@ export async function POST(request: NextRequest) {
               ? `## Timeline Conflicts\n\n${conflicts.map((c) => `- ${c}`).join("\n")}`
               : "## Timeline Conflicts\n\nNo obvious chronology conflicts detected.";
             emitAnswer(text, { reason: "timeline_conflict_check" });
-            controller.close();
+            finish();
             return;
           }
 
           if (bookId === "all") {
             send("STATUS", "Searching across your entire library (semantic search)...");
-            if (looksLikeHaveYouReadQuestion(questionText)) {
+            if (route.kind === "have_you_read") {
               const totalBooks = listBooks().length;
               const factual =
                 totalBooks > 0
                   ? `Yes — I’ve indexed your uploaded library and can answer questions from it. Right now I can see **${totalBooks} book${totalBooks === 1 ? "" : "s"}**.`
                   : "Not yet — I don’t see any uploaded books in your library. Add a book and I can answer from it immediately.";
-              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode });
+              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode, signal });
               emitAnswer(text, { reason: "have_you_read", scope: "all", usedSpecialists: false });
-              controller.close();
+              finish();
               return;
             }
-            if (looksLikeLibraryCountQuestion(questionText)) {
+            if (route.kind === "library_count") {
               const totalBooks = listBooks().length;
               const text =
                 totalBooks === 0
                   ? "You currently have **0 books** in your library."
                   : `You currently have **${totalBooks} book${totalBooks === 1 ? "" : "s"}** in your library.`;
-              const natural = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: text, modelId: orchestratorModelId, companionMode });
+              const natural = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: text, modelId: orchestratorModelId, companionMode, signal });
               emitAnswer(natural, { reason: "library_count", usedSpecialists: false });
               logChatEvent("library_count_answered", { totalBooks });
-              controller.close();
+              finish();
               return;
             }
-            const whoTarget = extractWhoIsTarget(questionText);
+            const whoTarget = route.kind === "who_is" ? route.target || null : null;
             if (whoTarget) {
               send("STATUS", `Looking up who "${whoTarget}" is in your library...`);
               const matches = searchAllBooksKeyword([whoTarget], 120);
@@ -520,15 +566,16 @@ export async function POST(request: NextRequest) {
                 })),
                 conversationContext: recentConversation,
                 modelId: orchestratorModelId,
+                signal,
               });
               const lines = [summary];
-              controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
+              emitAnswer(lines.join("\n"));
+              sendSources(sources);
               logChatEvent("who_is_answered", { scope: "all", whoTarget, matches: matches.length });
-              controller.close();
+              finish();
               return;
             }
-            if (!mentionTarget && shouldBypassSpecialists(questionText) && !bookGroundedIntent) {
+            if (!mentionTarget && route.kind === "bypass_general" && !bookGroundedIntent) {
               send("STATUS", "This is a general prompt — replying directly as your library assistant...");
               const directPrompt = `You are a friendly, practical digital librarian assistant.
 Answer naturally like a real helpful person.
@@ -537,17 +584,16 @@ Use recent conversation context for follow-up references.
 Recent conversation:
 ${recentConversation}
 User message: ${questionText}`;
-              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId);
+              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId, { signal });
               const final = directText || "I can help you explore your library, compare books, find quotes, count mentions, and summarize chapters with sources.";
               emitAnswer(final, { reason: "bypass_general_prompt", scope: "all", usedSpecialists: false });
               logChatEvent("specialist_bypass_general_prompt", { scope: "all", input: questionText.slice(0, 160) });
-              controller.close();
+              finish();
               return;
             }
 
-            const quotedText = extractQuotedText(questionText);
-            const quoteMode = quotedText || (looksLikeQuoteLookup(questionText) ? questionText : null);
-            if (looksLikeMainCharacterQuestion(questionText)) {
+            const quoteMode = resolveQuoteMode(questionText);
+            if (route.kind === "main_characters") {
               const allIds = listBooks().map((b) => b.id);
               const mains = deriveMainCharacters(allIds);
               const lines: string[] = [];
@@ -576,10 +622,10 @@ User message: ${questionText}`;
                 );
               }
               logChatEvent("main_character_answered", { scope: "all", count: mains.length });
-              const natural = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: lines.join("\n"), modelId: orchestratorModelId, companionMode });
+              const natural = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: lines.join("\n"), modelId: orchestratorModelId, companionMode, signal });
               emitAnswer(natural, { reason: "main_character", scope: "all", usedSpecialists: false });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
             if (mentionTarget) {
@@ -627,8 +673,8 @@ User message: ${questionText}`;
                   exact: true,
                 });
                 emitAnswer(text, { reason: "exact_mention_count", scope: "series" });
-                if (sources.length) send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                sendSources(sources);
+                finish();
                 return;
               }
 
@@ -659,43 +705,46 @@ User message: ${questionText}`;
                 exact: true,
               });
               emitAnswer(text, { reason: "exact_mention_count", scope: "all" });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
-            if (forceExactCount) {
-              emitAnswer("I can count mentions exactly — tell me the name to count.", {
-                reason: "exact_count_mode_missing_target",
-              });
-              controller.close();
-              return;
-            }
-
-            if (!quoteMode && !forceExactCount) {
-              const libraryCmdLate = resolveLibraryCommand(
-                lastUserMessage.content,
-                questionText
-              );
-              if (libraryCmdLate) {
-                await runLibraryCommand(libraryCmdLate);
-                controller.close();
-                return;
-              }
+            if (!quoteMode) {
               send("STATUS", "Building specialist roster from your books...");
-              const chosenBooks = await selectBooksForLibrarySpecialists(questionText);
+              checkpoint();
+              const selection = await selectLibrarySpecialists(questionText);
+              const chosenBooks = selection.books;
 
               if (!chosenBooks.length) {
                 send("ERROR", "No books available for specialist analysis.");
-                controller.close();
+                finish();
                 return;
               }
 
+              // Books the question names come first (or alone); say which ones are being read.
+              const namedIds = new Set(selection.namedBooks.map((b) => b.id));
+              const namedTitles = chosenBooks.filter((b) => namedIds.has(b.id)).map((b) => cleanBookDisplayTitle(b.title));
+              const otherTitles = chosenBooks.filter((b) => !namedIds.has(b.id)).map((b) => cleanBookDisplayTitle(b.title));
+              send(
+                "STATUS",
+                namedTitles.length
+                  ? `Reading ${namedTitles.join(", ")} (named in your question)${otherTitles.length ? `, then ${otherTitles.join(", ")}` : ""}`
+                  : `Reading: ${otherTitles.join(", ")}`
+              );
+              logChatEvent("specialist_books_selected", {
+                scope: "all",
+                named: selection.namedBooks.map((b) => b.title),
+                chosen: chosenBooks.map((b) => b.title),
+              });
+              const librarianNames = assignLibrarianNames(chosenBooks.map((b) => b.id));
               const roster = chosenBooks
                 .slice(0, 4)
-                .map((b, i) => `Librarian ${getLibrarianName(b.title, i)}`)
+                .map((b) => `Librarian ${librarianNames.get(b.id)}`)
                 .join(", ");
               send("STATUS", `Consulting ${chosenBooks.length} Librarian agents${roster ? `: ${roster}` : ""}...`);
+              const seedByTitle = seedPassagesByTitle(selection.seedPassages);
+              checkpoint();
               const specialistAnswers = await Promise.all(
                 chosenBooks.map((b) =>
                   askBookSpecialist({
@@ -703,9 +752,12 @@ User message: ${questionText}`;
                     bookTitle: b.title,
                     userQuestion: questionText,
                     modelId: specialistModelId,
+                    signal,
+                    seedPassages: seedByTitle.get(b.title),
                   })
                 )
               );
+              checkpoint();
               logChatEvent("specialists_completed", {
                 scope: "all",
                 count: specialistAnswers.length,
@@ -737,7 +789,7 @@ User message: ${questionText}`;
                 specialistAnswers,
                 orchestratorModelId,
                 personalityHint,
-                { companionMode, onToken: emitToken, continuityHint }
+                { companionMode, onToken: emitToken, continuityHint, signal }
               );
               logChatEvent("orchestrator_text_generated", {
                 scope: "all",
@@ -753,8 +805,8 @@ User message: ${questionText}`;
                 usedSpecialists: true,
                 streamed: true,
               });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
@@ -786,21 +838,18 @@ User message: ${questionText}`;
                   }
                 }
                 emitAnswer(lines.join("\n"), { reason: "exact_quote", scope: "all" });
-                send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                sendSources(sources);
+                finish();
                 return;
               }
               send("STATUS", "No exact quote matches found in stored page text");
             }
 
             send("STATUS", "Running keyword search for exact matches...");
-            const queryWords = questionText
-              .split(/\s+/)
-              .filter((w) => w.length > 3)
-              .slice(0, 5);
+            const queryWords = extractKeywords(questionText);
             const [passages, keywordMatches] = await Promise.all([
               passagesPromise,
-              Promise.resolve(queryWords.length ? searchAllBooksKeyword(queryWords, 500) : []),
+              Promise.resolve(queryWords.length ? searchAllBooksKeyword(queryWords, MAX_KEYWORD_SNIPPETS) : []),
             ]);
 
             const totalFound = passages.length + keywordMatches.length;
@@ -832,7 +881,7 @@ User message: ${questionText}`;
               contextParts.push(`[Passage ${passageNum} — from "${p.bookTitle}", ${p.location}]\n${p.text}`);
             }
 
-            for (const m of keywordMatches) {
+            for (const m of keywordMatches.slice(0, MAX_KEYWORD_SNIPPETS)) {
               passageNum++;
               sources.push({
                 book: m.bookTitle,
@@ -871,18 +920,18 @@ ${context}`;
             const seriesEntry = listSeries().find((s) => s.id === seriesId);
             const seriesName = seriesEntry?.name || bookTitle;
             send("STATUS", `Searching series "${seriesName}" (semantic search)...`);
-            if (looksLikeHaveYouReadQuestion(questionText)) {
+            if (route.kind === "have_you_read") {
               const seriesBooks = listBooks().filter((b) => seriesEntry?.bookIds.includes(b.id));
               const factual =
                 seriesBooks.length > 0
                   ? `Yes — I’ve indexed the books in **${seriesName}** and can answer from them. I currently see **${seriesBooks.length}** book${seriesBooks.length === 1 ? "" : "s"} in this series.`
                   : `Not yet — I can’t find indexed books in **${seriesName}** yet.`;
-              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode });
+              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode, signal });
               emitAnswer(text, { reason: "have_you_read", scope: "series", seriesId, usedSpecialists: false });
-              controller.close();
+              finish();
               return;
             }
-            const whoTarget = extractWhoIsTarget(questionText);
+            const whoTarget = route.kind === "who_is" ? route.target || null : null;
             if (whoTarget) {
               send("STATUS", `Looking up who "${whoTarget}" is in series "${seriesName}"...`);
               const matches = searchSeriesKeyword(seriesId, [whoTarget], 120);
@@ -909,15 +958,16 @@ ${context}`;
                 })),
                 conversationContext: recentConversation,
                 modelId: orchestratorModelId,
+                signal,
               });
               const lines = [summary];
-              controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
+              emitAnswer(lines.join("\n"));
+              sendSources(sources);
               logChatEvent("who_is_answered", { scope: "series", seriesId, whoTarget, matches: matches.length });
-              controller.close();
+              finish();
               return;
             }
-            if (!mentionTarget && shouldBypassSpecialists(questionText) && !bookGroundedIntent) {
+            if (!mentionTarget && route.kind === "bypass_general" && !bookGroundedIntent) {
               send("STATUS", "General prompt detected — replying directly without specialist fan-out...");
               const directPrompt = `You are a friendly librarian assistant helping with a selected series context (${seriesName}).
 If the user is not asking for evidence from books, respond conversationally and briefly.
@@ -925,17 +975,16 @@ Use recent conversation context for follow-up references.
 Recent conversation:
 ${recentConversation}
 User message: ${questionText}`;
-              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId);
+              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId, { signal });
               const final = directText || "I can help with this series — ask me about characters, themes, or specific evidence when you want citations.";
               emitAnswer(final, { reason: "bypass_general_prompt", scope: "series", usedSpecialists: false });
               logChatEvent("specialist_bypass_general_prompt", { scope: "series", seriesId, input: questionText.slice(0, 160) });
-              controller.close();
+              finish();
               return;
             }
 
-            const quotedText = extractQuotedText(questionText);
-            const quoteMode = quotedText || (looksLikeQuoteLookup(questionText) ? questionText : null);
-            if (looksLikeMainCharacterQuestion(questionText)) {
+            const quoteMode = resolveQuoteMode(questionText);
+            if (route.kind === "main_characters") {
               const seriesBookIds = listSeries().find((s) => s.id === seriesId)?.bookIds || [];
               const mains = deriveMainCharacters(seriesBookIds);
               const lines: string[] = [];
@@ -962,9 +1011,9 @@ User message: ${questionText}`;
                 lines.push("I couldn't confidently identify main characters in this series yet.");
               }
               logChatEvent("main_character_answered", { scope: "series", seriesId, count: mains.length });
-              controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              emitAnswer(lines.join("\n"));
+              sendSources(sources);
+              finish();
               return;
             }
             if (mentionTarget) {
@@ -1009,46 +1058,48 @@ User message: ${questionText}`;
                 exact: true,
               });
               emitAnswer(text, { reason: "exact_mention_count", scope: "series" });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
-            if (forceExactCount) {
-              emitAnswer("I can count mentions exactly — tell me the name to count.", {
-                reason: "exact_count_mode_missing_target",
-              });
-              controller.close();
-              return;
-            }
-
-            if (!quoteMode && !forceExactCount && seriesEntry) {
-              const libraryCmdSeries = resolveLibraryCommand(
-                lastUserMessage.content,
-                questionText
+            if (!quoteMode && seriesEntry) {
+              let catalogBooks = selectBooksForSeriesSpecialists(seriesEntry.bookIds);
+              // A book named in the question ("in Columbus Day, …") is read first / alone.
+              const namedInSeries = findNamedBooksInQuestion(questionText).filter((b) =>
+                seriesEntry.bookIds.includes(b.id)
               );
-              if (libraryCmdSeries) {
-                await runLibraryCommand(libraryCmdSeries);
-                controller.close();
-                return;
+              if (namedInSeries.length) {
+                const rest = catalogBooks.filter((b) => !namedInSeries.some((n) => n.id === b.id));
+                catalogBooks = [...namedInSeries, ...rest].slice(0, Math.max(catalogBooks.length, namedInSeries.length));
               }
-              const catalogBooks = selectBooksForSeriesSpecialists(seriesEntry.bookIds);
               if (catalogBooks.length) {
+                send("STATUS", `Reading: ${catalogBooks.map((b) => cleanBookDisplayTitle(b.title)).join(", ")}`);
+                const librarianNames = assignLibrarianNames(catalogBooks.map((b) => b.id));
                 const roster = catalogBooks
                   .slice(0, 4)
-                  .map((b, i) => `Librarian ${getLibrarianName(b.title, i)}`)
+                  .map((b) => `Librarian ${librarianNames.get(b.id)}`)
                   .join(", ");
                 send("STATUS", `Consulting ${catalogBooks.length} series Librarians${roster ? `: ${roster}` : ""}...`);
+                checkpoint();
+                // One semantic query for the series; specialists reuse their book's passages.
+                const seedByTitle = seedPassagesByTitle(
+                  await querySeriesBooks(seriesId, questionText, 48)
+                );
+                checkpoint();
                 const specialistAnswers = await Promise.all(
                   catalogBooks.map((b) =>
                     askBookSpecialist({
                       bookId: b.id,
                       bookTitle: b.title,
-                    userQuestion: questionText,
+                      userQuestion: questionText,
                       modelId: specialistModelId,
+                      signal,
+                      seedPassages: seedByTitle.get(b.title),
                     })
                   )
                 );
+                checkpoint();
                 logChatEvent("specialists_completed", {
                   scope: "series",
                   count: specialistAnswers.length,
@@ -1078,7 +1129,7 @@ User message: ${questionText}`;
                 specialistAnswers,
                 orchestratorModelId,
                 personalityHint,
-                { companionMode, onToken: emitToken, continuityHint }
+                { companionMode, onToken: emitToken, continuityHint, signal }
               );
                 logChatEvent("orchestrator_text_generated", {
                   scope: "series",
@@ -1094,8 +1145,8 @@ User message: ${questionText}`;
                   usedSpecialists: true,
                   streamed: true,
                 });
-                if (sources.length) send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                sendSources(sources);
+                finish();
                 return;
               }
             }
@@ -1127,22 +1178,19 @@ User message: ${questionText}`;
                     lines.push(`- **${entry.label}**: ${entry.snippet}`);
                   }
                 }
-                controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-                send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                emitAnswer(lines.join("\n"));
+                sendSources(sources);
+                finish();
                 return;
               }
               send("STATUS", "No exact quote matches found in this series");
             }
 
             send("STATUS", "Running keyword search for exact matches...");
-            const queryWords = questionText
-              .split(/\s+/)
-              .filter((w) => w.length > 3)
-              .slice(0, 5);
+            const queryWords = extractKeywords(questionText);
             const [passages, keywordMatches] = await Promise.all([
               passagesPromise,
-              Promise.resolve(queryWords.length ? searchSeriesKeyword(seriesId, queryWords, 400) : []),
+              Promise.resolve(queryWords.length ? searchSeriesKeyword(seriesId, queryWords, MAX_KEYWORD_SNIPPETS) : []),
             ]);
 
             const totalFound = passages.length + keywordMatches.length;
@@ -1174,7 +1222,7 @@ User message: ${questionText}`;
               contextParts.push(`[Passage ${passageNum} — from "${p.bookTitle}", ${p.location}]\n${p.text}`);
             }
 
-            for (const m of keywordMatches) {
+            for (const m of keywordMatches.slice(0, MAX_KEYWORD_SNIPPETS)) {
               passageNum++;
               sources.push({
                 book: m.bookTitle,
@@ -1208,17 +1256,17 @@ Relevant passages from series "${seriesName}":
 ${context}`;
           } else {
             send("STATUS", `Searching "${bookTitle}" (semantic search)...`);
-            if (looksLikeHaveYouReadQuestion(questionText)) {
+            if (route.kind === "have_you_read") {
               const selected = getBookById(bookId);
               const factual = selected
                 ? `Yes — I’ve indexed **${selected.title}** and can answer questions about it.`
                 : "I don’t have that selected book indexed yet. Re-add or re-index it and I can answer immediately.";
-              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode });
+              const text = await claudeNaturalAnswer({ userQuestion: questionText, factualAnswer: factual, modelId: orchestratorModelId, companionMode, signal });
               emitAnswer(text, { reason: "have_you_read", scope: "book", bookId, usedSpecialists: false });
-              controller.close();
+              finish();
               return;
             }
-            const whoTarget = extractWhoIsTarget(questionText);
+            const whoTarget = route.kind === "who_is" ? route.target || null : null;
             if (whoTarget) {
               send("STATUS", `Looking up who "${whoTarget}" is in "${bookTitle}"...`);
               const matches = searchBookKeyword(bookId, [whoTarget], 120);
@@ -1239,15 +1287,16 @@ ${context}`;
                 })),
                 conversationContext: recentConversation,
                 modelId: orchestratorModelId,
+                signal,
               });
               const lines = [summary];
-              controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
+              emitAnswer(lines.join("\n"));
+              sendSources(sources);
               logChatEvent("who_is_answered", { scope: "book", bookId, whoTarget, matches: matches.length });
-              controller.close();
+              finish();
               return;
             }
-            if (!mentionTarget && shouldBypassSpecialists(questionText) && !bookGroundedIntent) {
+            if (!mentionTarget && route.kind === "bypass_general" && !bookGroundedIntent) {
               send("STATUS", "General prompt detected — replying directly as Claude...");
               const directPrompt = `You are a friendly librarian assistant helping with one selected book (${bookTitle}).
 If user asks generally, answer naturally first.
@@ -1256,17 +1305,16 @@ Use recent conversation context for follow-up references.
 Recent conversation:
 ${recentConversation}
 User message: ${questionText}`;
-              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId);
+              const directText = await callClaudeText(directPrompt, 900, 0.4, orchestratorModelId, { signal });
               const final = directText || "Sure — I can help with summaries, character overviews, themes, quotes, and exact evidence from this book.";
               emitAnswer(final, { reason: "bypass_general_prompt", scope: "book", usedSpecialists: false });
               logChatEvent("specialist_bypass_general_prompt", { scope: "book", bookId, input: questionText.slice(0, 160) });
-              controller.close();
+              finish();
               return;
             }
 
-            const quotedText = extractQuotedText(questionText);
-            const quoteMode = quotedText || (looksLikeQuoteLookup(questionText) ? questionText : null);
-            if (looksLikeMainCharacterQuestion(questionText)) {
+            const quoteMode = resolveQuoteMode(questionText);
+            if (route.kind === "main_characters") {
               const mains = deriveMainCharacters([bookId]);
               const lines: string[] = [];
               if (mains.length) {
@@ -1292,9 +1340,9 @@ User message: ${questionText}`;
                 lines.push("I couldn't confidently identify the main characters yet for this book.");
               }
               logChatEvent("main_character_answered", { scope: "book", bookId, count: mains.length });
-              controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              emitAnswer(lines.join("\n"));
+              sendSources(sources);
+              finish();
               return;
             }
             if (mentionTarget) {
@@ -1343,8 +1391,8 @@ User message: ${questionText}`;
                   redirectedFromBook: bookId,
                 });
                 emitAnswer(text, { reason: "exact_mention_count", scope: "series" });
-                if (sources.length) send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                sendSources(sources);
+                finish();
                 return;
               }
 
@@ -1373,35 +1421,21 @@ User message: ${questionText}`;
                 exact: true,
               });
               emitAnswer(text, { reason: "exact_mention_count", scope: "book" });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
-
-            if (forceExactCount) {
-              emitAnswer("I can count mentions exactly — tell me the name to count.", {
-                reason: "exact_count_mode_missing_target",
-              });
-              controller.close();
-              return;
-            }
-            if (!quoteMode && !forceExactCount) {
-              const libraryCmdBook = resolveLibraryCommand(
-                lastUserMessage.content,
-                questionText
-              );
-              if (libraryCmdBook) {
-                await runLibraryCommand(libraryCmdBook);
-                controller.close();
-                return;
-              }
-              send("STATUS", `Consulting Librarian ${getLibrarianName(bookTitle)} for "${bookTitle}"...`);
+            if (!quoteMode) {
+              send("STATUS", `Consulting Librarian ${getLibrarianName(bookId)} for "${bookTitle}"...`);
+              checkpoint();
               const specialistAnswer = await askBookSpecialist({
                 bookId,
                 bookTitle,
                 userQuestion: questionText,
                 modelId: specialistModelId,
+                signal,
               });
+              checkpoint();
               logChatEvent("specialist_completed", {
                 scope: "book",
                 bookId,
@@ -1430,7 +1464,7 @@ User message: ${questionText}`;
                 [specialistAnswer],
                 orchestratorModelId,
                 personalityHint,
-                { companionMode, onToken: emitToken, continuityHint }
+                { companionMode, onToken: emitToken, continuityHint, signal }
               );
               logChatEvent("orchestrator_text_generated", {
                 scope: "book",
@@ -1446,8 +1480,8 @@ User message: ${questionText}`;
                 usedSpecialists: true,
                 streamed: true,
               });
-              if (sources.length) send("SOURCES", JSON.stringify(sources));
-              controller.close();
+              sendSources(sources);
+              finish();
               return;
             }
 
@@ -1469,22 +1503,19 @@ User message: ${questionText}`;
                     position: m.label,
                   });
                 }
-                controller.enqueue(encoder.encode(encodeStreamField("TEXT", lines.join("\n"))));
-                send("SOURCES", JSON.stringify(sources));
-                controller.close();
+                emitAnswer(lines.join("\n"));
+                sendSources(sources);
+                finish();
                 return;
               }
               send("STATUS", "No exact quote matches found in this book");
             }
 
             send("STATUS", "Running keyword search for exact matches...");
-            const queryWords = questionText
-              .split(/\s+/)
-              .filter((w) => w.length > 3)
-              .slice(0, 5);
+            const queryWords = extractKeywords(questionText);
             const [relevantChunks, keywordMatches] = await Promise.all([
               relevantChunksPromise,
-              Promise.resolve(queryWords.length ? searchBookKeyword(bookId, queryWords, 300) : []),
+              Promise.resolve(queryWords.length ? searchBookKeyword(bookId, queryWords, MAX_KEYWORD_SNIPPETS) : []),
             ]);
 
             const totalFound = relevantChunks.length + keywordMatches.length;
@@ -1507,7 +1538,7 @@ User message: ${questionText}`;
               contextParts.push(`[Passage ${passageNum}, ${passage.location}]\n${passage.text}`);
             }
 
-            for (const m of keywordMatches) {
+            for (const m of keywordMatches.slice(0, MAX_KEYWORD_SNIPPETS)) {
               passageNum++;
               sources.push({
                 book: bookTitle,
@@ -1557,14 +1588,17 @@ ${context}`;
           const conversation = (aiSettings.useConversationMemory === false ? [lastUserMessage] : messages)
             .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
             .join("\n\n");
-          const finalPrompt = `${systemPrompt}\n\nConversation so far:\n${conversation}`;
+          // System prompt goes in the Messages API `system` field; the conversation is the user turn.
+          const finalPrompt = `Conversation so far:\n${conversation}`;
+          const finalOpts = { system: systemPrompt, signal };
 
           send("STATUS", "Sending to Claude on Bedrock — reading passages and reasoning...");
+          checkpoint();
           const streamStart = Date.now();
           let finalText = "";
           if (groundedMode) {
             // Need full text first for grounded gate — stream after check via buffered approach:
-            finalText = await callClaudeText(finalPrompt, 2500, 0.2, orchestratorModelId);
+            finalText = await callClaudeText(finalPrompt, 2500, 0.2, orchestratorModelId, finalOpts);
             const hasCitation = /\(Passage\s+\d+/i.test(finalText) || /\bPage\s+\d+/i.test(finalText) || /\bChapter\s+\d+/i.test(finalText);
             if (!hasCitation || sources.length === 0) {
               finalText = "insufficient evidence";
@@ -1579,7 +1613,8 @@ ${context}`;
               emitToken,
               2500,
               0.2,
-              orchestratorModelId
+              orchestratorModelId,
+              finalOpts
             );
           }
           send(
@@ -1601,11 +1636,16 @@ ${context}`;
           send("STATUS", `Done — response generated in ${totalTime}s`);
 
           if (sources.length) {
-            send("SOURCES", JSON.stringify(sources));
+            sendSources(sources);
           }
 
-          controller.close();
+          finish();
         } catch (error) {
+          if (signal.aborted || isAbortError(error)) {
+            logChatEvent("chat_stream_aborted", { bookId });
+            finish();
+            return;
+          }
           console.error("Stream error:", error);
           const msg = error instanceof Error ? error.message : String(error);
           logChatEvent("chat_stream_error", { bookId, error: msg });
@@ -1617,7 +1657,7 @@ ${context}`;
           } else {
             send("ERROR", "Failed to generate response. " + msg);
           }
-          controller.close();
+          finish();
         }
       },
     });

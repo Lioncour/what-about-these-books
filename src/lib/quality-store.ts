@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, ensureDataDir, ensureDir } from "@/lib/runtime-config";
+import { DATA_DIR, ensureDataDir, ensureDir, writeJsonAtomic } from "@/lib/runtime-config";
 
 const QUALITY_DIR = join(DATA_DIR, "quality");
 const SCORECARD_FILE = join(QUALITY_DIR, "specialist-scorecards.json");
@@ -21,6 +21,8 @@ export interface SpecialistScorecard {
 
 interface SpecialistCacheEntry {
   key: string;
+  /** Set by newer writers so `removeBookFromQuality` can drop the book's rows; the key alone is a hash. */
+  bookId?: string;
   answer: string;
   confidence: "high" | "medium" | "low";
   findingsCount: number;
@@ -44,7 +46,7 @@ function loadScorecards(): SpecialistScorecard[] {
 
 function saveScorecards(rows: SpecialistScorecard[]): void {
   ensureQualityDir();
-  writeFileSync(SCORECARD_FILE, JSON.stringify(rows, null, 2));
+  writeJsonAtomic(SCORECARD_FILE, rows);
 }
 
 function loadCache(): SpecialistCacheEntry[] {
@@ -59,7 +61,7 @@ function loadCache(): SpecialistCacheEntry[] {
 
 function saveCache(rows: SpecialistCacheEntry[]): void {
   ensureQualityDir();
-  writeFileSync(CACHE_FILE, JSON.stringify(rows.slice(-500), null, 2));
+  writeJsonAtomic(CACHE_FILE, rows.slice(-500));
 }
 
 export function fingerprintQuestion(bookId: string, question: string): string {
@@ -108,6 +110,18 @@ export function updateSpecialistScorecard(params: {
   next.push(existing);
   saveScorecards(next);
   return existing;
+}
+
+/** Drop a deleted book's scorecard and the cache rows that recorded its id. */
+export function removeBookFromQuality(bookId: string): void {
+  const cards = loadScorecards();
+  if (cards.some((r) => r.bookId === bookId)) {
+    saveScorecards(cards.filter((r) => r.bookId !== bookId));
+  }
+  const cache = loadCache();
+  if (cache.some((r) => r.bookId === bookId)) {
+    saveCache(cache.filter((r) => r.bookId !== bookId));
+  }
 }
 
 export function listSpecialistScorecards(): SpecialistScorecard[] {

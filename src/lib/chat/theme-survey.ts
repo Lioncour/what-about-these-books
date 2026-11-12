@@ -56,7 +56,8 @@ function windowAround(text: string, index: number, radius = 220): string {
 
 export function looksLikePopCultureSurvey(question: string): boolean {
   const text = normalizeUserQuestion(question).toLowerCase();
-  return /\bpop culture\b|\bmovies?\b|\bfilms?\b|\btv\b|\btelevision\b|\bcomics?\b|\breferences? to\b/.test(
+  // Bare "references to X" is not a pop-culture survey ("Any references to Mars?").
+  return /\bpop culture\b|\bmovies?\b|\bfilms?\b|\btv\b|\btelevision\b|\bsongs?\b|\bbands?\b|\bmemes?\b|\bcomics?\b/.test(
     text
   );
 }

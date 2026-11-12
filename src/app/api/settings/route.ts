@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadSettings, saveSettings, type AISettings } from "@/lib/book-store";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 export async function GET() {
   return NextResponse.json(loadSettings());
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = publicModeBlocked("Changing settings");
+  if (blocked) return blocked;
   try {
     const body = await request.json();
     const answerMode: AISettings["answerMode"] =

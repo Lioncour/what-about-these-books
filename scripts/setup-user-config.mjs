@@ -1,3 +1,8 @@
+// Seeds ~/.whataboutthisbook/.env for the person running this machine.
+//
+// Only `npm run dist:setup` runs this on purpose. It is NOT hooked into
+// `npm run dist` (there used to be a `postdist` hook): a packaging build must
+// not write user config into the builder's home directory.
 import fs from "fs";
 import path from "path";
 import os from "os";

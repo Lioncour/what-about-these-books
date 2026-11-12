@@ -4,7 +4,10 @@ import {
   queryBook,
   searchBookKeyword,
   loadBookSpecialistProfile,
+  getBookById,
 } from "@/lib/book-store";
+import { DEFAULT_BEDROCK_MODEL_ID } from "@/lib/bedrock-client";
+import { getReindexState } from "@/lib/reindex-manager";
 import {
   fingerprintQuestion,
   getCachedSpecialistAnswer,
@@ -12,6 +15,7 @@ import {
   updateSpecialistScorecard,
 } from "@/lib/quality-store";
 import { isLibraryManagementInput } from "@/lib/chat/library-commands";
+import { extractKeywords } from "@/lib/chat/intent";
 import type {
   SpecialistAnswer,
   SpecialistConfidence,
@@ -84,6 +88,7 @@ export async function synthesizeWhoIsAnswer(params: {
   snippets: Array<{ book: string; label: string; snippet: string }>;
   conversationContext?: string;
   modelId?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   if (!params.snippets.length) {
     return `I couldn't find enough evidence to identify **${params.target}** in ${params.scopeLabel}.`;
@@ -107,7 +112,7 @@ Then add a short markdown section "## Evidence notes" with 2-4 bullets citing ev
 
 Evidence:
 ${context}`;
-  const text = await callClaudeText(prompt, 900, 0.2, params.modelId);
+  const text = await callClaudeText(prompt, 900, 0.2, params.modelId, { signal: params.signal });
   return text?.trim() || `I found references to **${params.target}**, but I couldn't generate a reliable identity summary yet.`;
 }
 
@@ -135,11 +140,30 @@ export function toSpecialistReports(
   }));
 }
 
+function parseFindings(value: unknown): SpecialistFinding[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((f) => ({
+    finding: String((f as SpecialistFinding)?.finding || ""),
+    location: String((f as SpecialistFinding)?.location || "Unknown location"),
+    evidence: String((f as SpecialistFinding)?.evidence || ""),
+  }));
+}
+
+/** Cache key: book + question + model + book/index generation, so a reindex or model switch misses. */
+function specialistCacheKey(bookId: string, question: string, modelId: string): string {
+  const book = getBookById(bookId);
+  const reindexedAt = getReindexState().finishedAt || "";
+  return fingerprintQuestion(`${bookId}::${modelId}::${book?.addedAt || ""}::${reindexedAt}`, question);
+}
+
 export async function askBookSpecialist(params: {
   bookId: string;
   bookTitle: string;
   userQuestion: string;
   modelId?: string;
+  signal?: AbortSignal;
+  /** Semantic passages for this book from the request's one seed query (skips a re-embed). */
+  seedPassages?: Array<{ text: string; location: string }>;
 }): Promise<SpecialistAnswer & { reasked?: boolean; scorecard?: StreamSpecialistReport["scorecard"] }> {
   if (isLibraryManagementInput(params.userQuestion)) {
     return {
@@ -153,25 +177,29 @@ export async function askBookSpecialist(params: {
     };
   }
 
-  const cacheKey = fingerprintQuestion(params.bookId, params.userQuestion);
-  const cached = getCachedSpecialistAnswer(cacheKey);
-  if (cached) {
+  const modelId = params.modelId || DEFAULT_BEDROCK_MODEL_ID;
+  const cacheKey = specialistCacheKey(params.bookId, params.userQuestion, modelId);
+  const cached = getCachedSpecialistAnswer(cacheKey) as
+    | (ReturnType<typeof getCachedSpecialistAnswer> & { findings?: unknown; numericEstimate?: unknown })
+    | null;
+  // Only entries that carry their findings are usable; older ones (no findings) are bypassed.
+  if (cached && Array.isArray(cached.findings)) {
     return {
       bookTitle: params.bookTitle,
       confidence: parseSpecialistConfidence(cached.confidence),
       directAnswer: cached.answer,
-      numericEstimate: null,
-      findings: [],
+      numericEstimate: typeof cached.numericEstimate === "number" ? cached.numericEstimate : null,
+      findings: parseFindings(cached.findings),
       caveats: ["Served from specialist cache"],
     };
   }
 
-  const semantic = await queryBook(params.bookId, params.userQuestion, 16);
-  const words = params.userQuestion
-    .split(/\s+/)
-    .filter((w) => w.length > 3)
-    .slice(0, 6);
-  const keyword = words.length ? searchBookKeyword(params.bookId, words, 60) : [];
+  params.signal?.throwIfAborted();
+  const semantic = params.seedPassages?.length
+    ? params.seedPassages
+    : await queryBook(params.bookId, params.userQuestion, 16);
+  const words = extractKeywords(params.userQuestion);
+  const keyword = words.length ? searchBookKeyword(params.bookId, words, 40) : [];
   const profile = loadBookSpecialistProfile(params.bookId);
 
   let context = [
@@ -197,10 +225,11 @@ Rules:
 ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profile.keyTopics.join(", ")}` : ""}`;
 
   const raw = await callClaudeText(
-    `${specialistPrompt}\n\nQuestion: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
+    `Question: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
     1400,
     0.1,
-    params.modelId
+    modelId,
+    { system: specialistPrompt, signal: params.signal }
   );
   const json = extractJsonObject(raw);
   if (!json) {
@@ -235,20 +264,15 @@ ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profil
       confidence: parseSpecialistConfidence(parsed.confidence),
       directAnswer: parsed.directAnswer || "No answer provided.",
       numericEstimate: typeof parsed.numericEstimate === "number" ? parsed.numericEstimate : null,
-      findings: Array.isArray(parsed.findings)
-        ? parsed.findings.map((f) => ({
-            finding: String((f as SpecialistFinding).finding || ""),
-            location: String((f as SpecialistFinding).location || "Unknown location"),
-            evidence: String((f as SpecialistFinding).evidence || ""),
-          }))
-        : [],
+      findings: parseFindings(parsed.findings),
       caveats: Array.isArray(parsed.caveats) ? parsed.caveats.map(String) : [],
     };
     let reasked = false;
 
-    if (answer.confidence === "low" || answer.findings.length < 2) {
+    // Re-ask only when the book had passages to read and the specialist still found nothing.
+    if (answer.findings.length === 0 && semantic.length > 0 && !params.signal?.aborted) {
       const deepSemantic = await queryBook(params.bookId, params.userQuestion, 28);
-      const deepKeyword = words.length ? searchBookKeyword(params.bookId, words, 140) : [];
+      const deepKeyword = words.length ? searchBookKeyword(params.bookId, words, 80) : [];
       context = [
         ...deepSemantic.map((s, i) => `[S${i + 1} ${s.location}] ${s.text}`),
         ...deepKeyword.map((k, i) => `[K${i + 1} ${k.label}] ${k.snippet}`),
@@ -256,10 +280,11 @@ ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profil
         .slice(0, 120)
         .join("\n\n");
       const retryRaw = await callClaudeText(
-        `${specialistPrompt}\n\nRE-ASK: Previous answer was low confidence. Extract all evidence again, strictly from context.\nQuestion: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
+        `RE-ASK: Previous answer had no findings. Extract all evidence again, strictly from context.\nQuestion: ${params.userQuestion}\n\nContext:\n${context || "(No context found)"}`,
         1400,
         0.05,
-        params.modelId
+        modelId,
+        { system: specialistPrompt, signal: params.signal }
       );
       const retryJson = extractJsonObject(retryRaw);
       if (retryJson) {
@@ -274,11 +299,7 @@ ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profil
                 ? retryParsed.numericEstimate
                 : answer.numericEstimate,
             findings: Array.isArray(retryParsed.findings)
-              ? retryParsed.findings.map((f) => ({
-                  finding: String((f as SpecialistFinding).finding || ""),
-                  location: String((f as SpecialistFinding).location || "Unknown location"),
-                  evidence: String((f as SpecialistFinding).evidence || ""),
-                }))
+              ? parseFindings(retryParsed.findings)
               : answer.findings,
             caveats: Array.isArray(retryParsed.caveats)
               ? retryParsed.caveats.map(String)
@@ -291,13 +312,18 @@ ${profile ? `Specialist memory summary: ${profile.summary}\nKey topics: ${profil
       }
     }
 
-    setCachedSpecialistAnswer({
+    // Findings travel with the entry so a cache hit still has sources.
+    const cacheRow = {
       key: cacheKey,
+      bookId: params.bookId,
       answer: answer.directAnswer,
       confidence: answer.confidence,
       findingsCount: answer.findings.length,
+      findings: answer.findings,
+      numericEstimate: answer.numericEstimate,
       createdAt: new Date().toISOString(),
-    });
+    };
+    setCachedSpecialistAnswer(cacheRow);
     const score = updateSpecialistScorecard({
       bookId: params.bookId,
       bookTitle: params.bookTitle,

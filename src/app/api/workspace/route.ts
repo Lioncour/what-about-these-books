@@ -5,6 +5,7 @@ import {
   listWorkspaceNotes,
   saveWorkspaceNote,
 } from "@/lib/ops-store";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 export async function GET(request: NextRequest) {
   const mode = request.nextUrl.searchParams.get("mode") || "notes";
@@ -18,6 +19,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = publicModeBlocked("Editing workspace notes");
+  if (blocked) return blocked;
   const body = await request.json();
   const note = saveWorkspaceNote({
     id: body?.id ? String(body.id) : undefined,
@@ -28,6 +31,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const blocked = publicModeBlocked("Deleting workspace notes");
+  if (blocked) return blocked;
   const id = request.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
   deleteWorkspaceNote(id);

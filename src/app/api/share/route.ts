@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isPublicMode, listBooks, loadBookPages } from "@/lib/book-store";
+import { isPublicMode, listBooks, loadBookPages, isValidBookId } from "@/lib/book-store";
 import { createShareLink, findShareByToken, listShareLinks, redactText } from "@/lib/ops-store";
 
 function shareExpired(expiresAt?: string): boolean {
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "At least one bookId is required" }, { status: 400 });
   }
   const known = new Set(listBooks().map((b) => b.id));
-  if (bookIds.some((id: string) => !known.has(id))) {
+  if (bookIds.some((id: string) => !isValidBookId(id) || !known.has(id))) {
     return NextResponse.json({ error: "Unknown book id in share request" }, { status: 400 });
   }
   const link = createShareLink({

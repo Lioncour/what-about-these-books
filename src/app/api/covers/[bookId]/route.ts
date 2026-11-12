@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCoverPath } from "@/lib/book-store";
+import { getCoverPath, isValidBookId } from "@/lib/book-store";
 import { readFileSync } from "fs";
 
 const MIME_TYPES: Record<string, string> = {
@@ -15,6 +15,9 @@ export async function GET(
   { params }: { params: Promise<{ bookId: string }> }
 ) {
   const { bookId } = await params;
+  if (!isValidBookId(bookId)) {
+    return NextResponse.json({ error: "Invalid book id" }, { status: 400 });
+  }
   const coverPath = getCoverPath(bookId);
 
   if (!coverPath) {

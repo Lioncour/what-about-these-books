@@ -22,10 +22,24 @@ let credentialsVerifiedAt = 0;
 let ensureCredentialsInFlight: Promise<AwsCredentialStatus> | null = null;
 let lastIdentityArn: string | null = null;
 
+/** Real expiry / missing-credential signatures only — not permissions, not network. */
 export function isAwsAuthExpiredMessage(message: string): boolean {
-  return /ExpiredToken|The SSO session associated with this profile has expired|Unable to locate credentials|TokenRefreshRequired|Could not load credentials|credentials have expired|NoCredentials|credentials|SSO session|not authorized|UnrecognizedClient|InvalidClientTokenId|Security token/i.test(
+  return /ExpiredToken(?:Exception)?|The SSO session associated with this profile has expired|SSO session .* has expired|Unable to locate credentials|TokenRefreshRequired|Could not load credentials|credentials have expired|NoCredentialProviders|NoCredentials|UnrecognizedClient(?:Exception)?|InvalidClientTokenId|UnauthorizedException|security token included in the request is (?:invalid|expired)|Token has expired|provided token has expired|Error loading SSO Token|loading SSO token/i.test(
     message
   );
+}
+
+/** Offline / DNS / connection failures — a browser login won't help here. */
+export function isNetworkErrorMessage(message: string): boolean {
+  return /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|getaddrinfo|Could not connect to the endpoint URL|Connect timeout|Connection was closed|socket hang up|network error|Failed to fetch|fetch failed|Max retries exceeded|SSL validation failed/i.test(
+    message
+  );
+}
+
+export function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { name?: string; message?: string };
+  return err.name === "AbortError" || /\baborted\b/i.test(err.message || "");
 }
 
 function awsProfileArgs(): string[] {
@@ -70,7 +84,19 @@ async function runAwsCli(
   return { ok: false, message: "AWS CLI not found", stdout: "" };
 }
 
-export async function runAwsSsoLogin(): Promise<boolean> {
+let ssoLoginInFlight: Promise<boolean> | null = null;
+
+/** Run `aws sso login` once; concurrent callers share the same browser login. */
+export function runAwsSsoLogin(): Promise<boolean> {
+  if (ssoLoginInFlight) return ssoLoginInFlight;
+  const pending = runAwsSsoLoginOnce().finally(() => {
+    if (ssoLoginInFlight === pending) ssoLoginInFlight = null;
+  });
+  ssoLoginInFlight = pending;
+  return pending;
+}
+
+async function runAwsSsoLoginOnce(): Promise<boolean> {
   const profile = process.env.AWS_PROFILE?.trim();
   const args = profile ? ["sso", "login", "--profile", profile] : ["sso", "login"];
   for (const cli of AWS_CLI_CANDIDATES) {
@@ -169,7 +195,19 @@ export async function ensureAwsCredentials(opts?: {
       };
     }
 
-    // Any identity failure → try SSO login (session may have expired quietly)
+    // Offline / unreachable: a browser login would not help — report, don't open one.
+    if (isNetworkErrorMessage(check.message)) {
+      logChatEvent("aws_identity_check_network_error", { reason: check.message.slice(0, 300) });
+      return {
+        ok: false,
+        profile,
+        region,
+        loginAttempted,
+        error: "AWS is unreachable (network error). Check your connection and try again.",
+      };
+    }
+
+    // Any other identity failure → try SSO login (session may have expired quietly)
     loginAttempted = true;
     logChatEvent("aws_sso_login_proactive", { reason: check.message.slice(0, 300) });
     const loginOk = await runAwsSsoLogin();
@@ -223,8 +261,14 @@ export async function ensureAwsCredentials(opts?: {
   return pending;
 }
 
-/** Run a Bedrock call; ensure AWS login first, then retry once after SSO on auth errors. */
-export async function withBedrockAuthRetry<T>(operation: () => Promise<T>): Promise<T> {
+/**
+ * Run a Bedrock call; ensure AWS login first, then retry once after SSO on auth errors.
+ * `canRetry` lets streaming callers refuse a retry once output has been emitted.
+ */
+export async function withBedrockAuthRetry<T>(
+  operation: () => Promise<T>,
+  canRetry: () => boolean = () => true
+): Promise<T> {
   const status = await ensureAwsCredentials();
   if (!status.ok) {
     throw new Error(status.error || "AWS credentials unavailable");
@@ -234,8 +278,9 @@ export async function withBedrockAuthRetry<T>(operation: () => Promise<T>): Prom
     try {
       return await operation();
     } catch (error) {
+      if (isAbortError(error)) throw error;
       const msg = error instanceof Error ? error.message : String(error);
-      if (attempt === 0 && isAwsAuthExpiredMessage(msg)) {
+      if (attempt === 0 && canRetry() && isAwsAuthExpiredMessage(msg)) {
         credentialsVerifiedAt = 0;
         logChatEvent("aws_sso_login_triggered", { reason: msg.slice(0, 300) });
         const relogged = await ensureAwsCredentials({ forceLogin: true });
@@ -248,7 +293,9 @@ export async function withBedrockAuthRetry<T>(operation: () => Promise<T>): Prom
 }
 
 export async function sendBedrockCommand(
-  command: InvokeModelCommand
+  command: InvokeModelCommand,
+  signal?: AbortSignal
 ): Promise<InvokeModelCommandOutput> {
-  return withBedrockAuthRetry(() => bedrockClient.send(command));
+  signal?.throwIfAborted();
+  return withBedrockAuthRetry(() => bedrockClient.send(command, { abortSignal: signal }));
 }

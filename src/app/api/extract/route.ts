@@ -8,6 +8,7 @@ import {
   normalizeTextId,
   normalizeSeriesKey,
   cleanSeriesDisplayName,
+  cleanIngestTitle,
   titleFromFilename,
 } from "@/lib/series-detection";
 import { resolveSeriesName } from "@/lib/series-lookup";
@@ -19,7 +20,6 @@ import {
   loadSettings,
   saveCover,
   findBookByFilename,
-  saveBookPages,
   listBooks,
   listSeries,
   saveSeries,
@@ -29,6 +29,31 @@ import type { BookPage } from "@/lib/book-store";
 import { rebuildKnowledgeForBook } from "@/lib/knowledge-store";
 
 export const maxDuration = 300;
+
+/** Uploads above this are refused with 413 before the body is read. */
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+
+/**
+ * epub2 parses the TOC asynchronously and throws from a callback when a navLabel is not
+ * a string (`navLabel.trim is not a function`); nothing in our await chain can catch it,
+ * so without this the whole server dies on one malformed EPUB. Installed once at module
+ * load (a per-upload listener leaked and, with several uploads, stacked up). Only that
+ * known error is swallowed; anything else is logged and rethrown so it still crashes
+ * loudly instead of being hidden.
+ */
+const EPUB2_TOC_BUG = /\.trim is not a function/;
+const EXTRACT_UNCAUGHT_FLAG = "__whataboutthisbook_epub_uncaught";
+if (!(globalThis as Record<string, unknown>)[EXTRACT_UNCAUGHT_FLAG]) {
+  (globalThis as Record<string, unknown>)[EXTRACT_UNCAUGHT_FLAG] = true;
+  process.on("uncaughtException", (err: Error) => {
+    if (EPUB2_TOC_BUG.test(err?.message || "")) {
+      console.warn("Ignored epub2 TOC parser error:", err.message);
+      return;
+    }
+    console.error("Uncaught exception (not the epub2 TOC bug), rethrowing:", err);
+    throw err;
+  });
+}
 
 function findLikelyDuplicate(params: { filename: string; title: string; author?: string }): { id: string; title: string } | null {
   const existing = findBookByFilename(params.filename);
@@ -168,6 +193,7 @@ interface EpubResult {
   pages: BookPage[];
   cover?: { buffer: Buffer; mimeType: string };
   author?: string;
+  title?: string;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -195,7 +221,7 @@ interface EpubFlowItem {
 
 interface EpubBook {
   flow: EpubFlowItem[];
-  metadata?: { cover?: string; creator?: string };
+  metadata?: { cover?: string; creator?: string; title?: string };
   getChapterAsync(id: string): Promise<string>;
   getImageAsync(id: string): Promise<[Buffer, string]>;
 }
@@ -261,7 +287,8 @@ async function extractEpubInner(
   }
 
   const author = epub.metadata?.creator || undefined;
-  return { text: chapters.join("\n\n"), pages, cover, author };
+  const title = epub.metadata?.title || undefined;
+  return { text: chapters.join("\n\n"), pages, cover, author, title };
 }
 
 async function extractEpub(
@@ -272,17 +299,7 @@ async function extractEpub(
   const filePath = join(dir, "book.epub");
   await writeFile(filePath, Buffer.from(buffer));
 
-  // epub2 throws uncaught exceptions from its internal TOC parser
-  // (navLabel.trim errors). Trap them so they don't crash the server.
-  const trapUncaught = (err: Error) => {
-    if (err?.message?.includes(".trim is not a function")) {
-      // Swallowed — epub2 TOC parsing bug
-    } else {
-      throw err;
-    }
-  };
-  process.on("uncaughtException", trapUncaught);
-
+  // The epub2 TOC-parser crash is trapped by the module-level uncaughtException handler above.
   const timeouts = getEpubTimeouts(buffer.byteLength);
 
   try {
@@ -292,7 +309,6 @@ async function extractEpub(
       "full EPUB extraction"
     );
   } finally {
-    process.removeListener("uncaughtException", trapUncaught);
     await unlink(filePath).catch(() => {});
   }
 }
@@ -325,6 +341,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > MAX_UPLOAD_BYTES) {
+    return Response.json(
+      { error: `File too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` },
+      { status: 413 }
+    );
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -342,9 +366,15 @@ export async function POST(request: NextRequest) {
           controller.close();
           return;
         }
+        if (file.size > MAX_UPLOAD_BYTES) {
+          send("ERROR", `File too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).`);
+          controller.close();
+          return;
+        }
 
         const ext = file.name.split(".").pop()?.toLowerCase();
-        const title = titleFromFilename(file.name);
+        let title = titleFromFilename(file.name);
+        let metadataTitle: string | undefined;
 
         const existing = findLikelyDuplicate({ filename: file.name, title, author: undefined });
         if (existing) {
@@ -382,6 +412,7 @@ export async function POST(request: NextRequest) {
             pages = epubResult.pages;
             epubCover = epubResult.cover;
             author = epubResult.author;
+            metadataTitle = epubResult.title;
             if (epubCover) send("PROGRESS", "Found cover image");
             if (author) send("PROGRESS", `Author: ${author}`);
             send("PROGRESS", `Extracted ${pages.length} chapters`);
@@ -473,14 +504,30 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Library title: the book's own metadata, else the filename without
+        // author, format and series tails ("paradise expeditionary force book 3
+        // alanson craig" -> "Paradise").
+        const seriesNameForTitle = seriesId
+          ? listSeries().find((s) => s.id === seriesId)?.name
+          : undefined;
+        title = cleanIngestTitle({
+          filename: file.name,
+          metadataTitle,
+          author,
+          seriesName: seriesNameForTitle,
+        });
+
+        // addBook writes texts/<id>.json first, then the index and catalog; if either
+        // fails it removes the pages file again (and the index doc if the catalog failed),
+        // so a book never exists in the catalog without its text.
         const book = await addBook(title, file.name, text, wordCount, {
           hasCover: !!epubCover,
           author,
           fileType: ext?.toUpperCase(),
           seriesId,
+          pages,
         });
 
-        saveBookPages(book.id, pages);
         rebuildKnowledgeForBook({ bookId: book.id, bookTitle: book.title, pages });
         await buildSpecialistProfile(book.id, book.title, pages, (msg) =>
           send("PROGRESS", msg)

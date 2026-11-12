@@ -26,19 +26,21 @@ export default function PassageReader({
   onClose: () => void;
   onAskAbout?: (prompt: string) => void;
 }) {
-  const [data, setData] = useState<PassagePayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Result of the last fetch, tagged with the target it belongs to, so loading
+  // and "no data" states are derived instead of reset inside the effect.
+  const [result, setResult] = useState<{
+    target: PassageReaderTarget;
+    data: PassagePayload | null;
+    error: string | null;
+  } | null>(null);
+  const current = result && result.target === target ? result : null;
+  const data = current?.data ?? null;
+  const error = current?.error ?? null;
+  const loading = !!target && !current;
 
   useEffect(() => {
-    if (!target) {
-      setData(null);
-      setError(null);
-      return;
-    }
+    if (!target) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     const params = new URLSearchParams();
     if (target.bookId) params.set("bookId", target.bookId);
     params.set("book", target.book);
@@ -50,16 +52,16 @@ export default function PassageReader({
         return res.json() as Promise<PassagePayload>;
       })
       .then((payload) => {
-        if (!cancelled) setData(payload);
+        if (!cancelled) setResult({ target, data: payload, error: null });
       })
       .catch((err) => {
         if (!cancelled) {
-          setData(null);
-          setError(err instanceof Error ? err.message : "Failed to load");
+          setResult({
+            target,
+            data: null,
+            error: err instanceof Error ? err.message : "Failed to load",
+          });
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {

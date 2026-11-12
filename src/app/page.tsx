@@ -336,8 +336,8 @@ export default function Home() {
     setThinkingSteps([]);
   }, []);
 
-  const sendMessage = useCallback(async () => {
-    const trimmed = input.trim();
+  const sendMessage = useCallback(async (text?: string) => {
+    const trimmed = (typeof text === "string" ? text : input).trim();
     if (!trimmed || isLoading) return;
 
     const bookId = focusBookId || "all";
@@ -1042,7 +1042,7 @@ export default function Home() {
                             type="button"
                             onClick={() => {
                               setInput(suggestion);
-                              textareaRef.current?.focus();
+                              void sendMessage(suggestion);
                             }}
                             className="prompt-link text-[15px]"
                           >
@@ -1157,7 +1157,7 @@ export default function Home() {
               ) : (
                 <button
                   type="button"
-                  onClick={sendMessage}
+                  onClick={() => void sendMessage()}
                   disabled={!input.trim()}
                   className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-[var(--on-primary)] transition-all hover:bg-primary-hover disabled:opacity-35 disabled:hover:bg-primary"
                   title="Send"

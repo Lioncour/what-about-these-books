@@ -13,6 +13,38 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Fixed — 2026-11-12 review pass
+
+Full list with file references in `docs/REVIEW-2026-11-12.md`.
+
+- **A book named in the question is the book that gets read.** Specialists and exact counts
+  scope to titles (or "book 3" of a named series) found in the question; the STATUS line says so.
+  "In Columbus Day, how does Joe first meet Skippy?" went from 7 Claude calls / ~140k input
+  tokens reading books 2–7 to 2 calls / ~10k tokens reading Columbus Day.
+- **Local API hardened**: same-origin check on every mutating `/api/*` request (`src/proxy.ts`),
+  `bookId`/`chatId`/`seriesId`/`backupId` validated before any path join, `restoreBackup` only
+  accepts listed backups, PUBLIC_MODE blocks every mutating route.
+- **Data safety**: atomic JSON writes everywhere (`writeJsonAtomic`), `books.json.bak` fallback,
+  ingest writes text before index/catalog and rolls back on failure, index updates serialised,
+  stale reindex state detected, Vectra cache dropped after restore, series reconcile no longer
+  overwrites books added meanwhile, `deleteBook` cascades to knowledge/quality/shares/chats.
+- **Chat pipeline**: Stop aborts Bedrock calls; streaming auth retry no longer duplicates output;
+  one SSO login at a time, none when offline; specialist cache keeps findings and keys by model
+  and index generation; re-ask only when a book had nothing; question embedded once per request;
+  keyword sweep limited to 6 real keywords / 40 snippets with whole-word matching; system prompt
+  in the Messages `system` field; ERROR lines encoded like TEXT; stream closed properly.
+- **Heuristics**: "they" no longer reads as "hey"; short plot questions go to the books, not
+  model memory; "who is Joe in love with?" → Joe; "which books mention X" is not a library
+  count; "appear nervous" is not a count; "the Elders" keeps its article; quotes only force
+  exact-quote mode when asked for.
+- **UI**: suggested questions send on click; sources collapse repeats (×N) and show a snippet;
+  librarian names unique per book; new books get clean titles (EPUB metadata, else filename
+  minus author/format/series tails).
+- **Electron**: free-port pick (3000–3010), whole process tree killed on quit, startup errors
+  shown in a dialog with the server's stderr tail.
+- **Tooling**: vitest (`npm test`), CI runs typecheck + lint + test + build on Node 22,
+  `@types/node` 22, `postdist` removed.
+
 ### Added
 
 - **Architecture guide** — `docs/ARCHITECTURE.md` for “how it works / why”.

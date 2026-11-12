@@ -87,6 +87,8 @@ Default root: **`~/.whataboutthisbook/`** (override with `DATA_DIR`).
 | `backups/` | Snapshots |
 | `logs/chat.log` | Debug trail (what the pipeline did) |
 
+All JSON stores are written atomically (`writeJsonAtomic` in `runtime-config.ts`: temp file + rename), `books.json` keeps a `.bak`, and index updates are serialised (`withIndexLock` in `book-store.ts`).
+
 ### Dual retrieval (important!)
 
 1. **Semantic (Vectra + Titan)** — “what’s this about?”, themes, vague questions  
@@ -113,6 +115,10 @@ WHY:{…}
 **Caveat friends always ask about:** Claude itself is **not** token-streamed yet. Bedrock `InvokeModel` returns a full answer. The “stream” is progress updates (`STATUS`) plus a safely encoded final answer (`TEXT`), so long Markdown with newlines doesn’t break the protocol.
 
 Encoding lives in `src/lib/chat/stream-protocol.ts`.
+
+### Scope by named book
+
+Before anything is embedded, `findNamedBooksInQuestion` (`specialist-limits.ts`) looks for catalog titles (or "book 3" of a series named in the question). Named books are read first and, when exactly one is named, alone; exact mention counts scope the same way. This is what keeps "In Columbus Day, …" from being answered by books 2–7.
 
 ### Pipeline overview
 
@@ -210,7 +216,7 @@ Re-index without re-upload: `reindex-manager.ts` + `/api/reindex`.
 
 | Topic | Reality |
 |-------|---------|
-| **Loopback** | Normal desktop use stays on localhost. |
+| **Loopback** | Normal desktop use stays on localhost. `src/proxy.ts` rejects mutating `/api/*` requests whose `Origin` isn't our own (or `Sec-Fetch-Site: cross-site`), so a web page open in your browser can't drive the API. Ids are validated before any path is built. |
 | **No user accounts** | It’s a personal library app, not multi-tenant SaaS. |
 | **`PUBLIC_MODE=true`** | Hides upload / blocks some deletes & share admin — for demos. Incomplete for “secure public internet hosting”. |
 | **Share links** | Token in local `ops/shares.json`; treat tokens like secrets. |

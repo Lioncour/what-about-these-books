@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTokenUsageSummary, resetTokenUsage } from "@/lib/token-usage-store";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 export async function GET() {
   return NextResponse.json(getTokenUsageSummary());
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = publicModeBlocked("Resetting token usage");
+  if (blocked) return blocked;
   try {
     const body = await request.json().catch(() => ({}));
     if (body?.action === "reset") {

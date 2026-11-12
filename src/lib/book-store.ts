@@ -1,8 +1,19 @@
 import { LocalDocumentIndex } from "vectra";
 import { BedrockEmbeddings } from "./bedrock-embeddings";
 import { join } from "path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
-import { DATA_DIR, ensureDir } from "@/lib/runtime-config";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, statSync, copyFileSync } from "fs";
+import {
+  DATA_DIR,
+  ensureDir,
+  writeJsonAtomic,
+  isValidBookId,
+  isValidChatId,
+  isValidSeriesId,
+  InvalidIdError,
+} from "@/lib/runtime-config";
+import { removeBookFromKnowledge } from "@/lib/knowledge-store";
+import { removeBookFromQuality } from "@/lib/quality-store";
+import { removeBookFromShares } from "@/lib/ops-store";
 import {
   cleanSeriesDisplayName,
   normalizeSeriesKey,
@@ -29,7 +40,11 @@ const SPECIALISTS_DIR = join(DATA_DIR, "specialists");
 const CATALOG_FILE = join(DATA_DIR, "books.json");
 const SETTINGS_FILE = join(DATA_DIR, "settings.json");
 
-export const isPublicMode = process.env.PUBLIC_MODE === "true";
+export { isPublicMode, isValidBookId, isValidChatId, isValidSeriesId } from "@/lib/runtime-config";
+
+function assertBookId(bookId: unknown): asserts bookId is string {
+  if (!isValidBookId(bookId)) throw new InvalidIdError("book", bookId);
+}
 
 export interface AISettings {
   language: string;
@@ -129,29 +144,64 @@ export interface BookSpecialistProfile {
   updatedAt: string;
 }
 
-export function saveBookPages(bookId: string, pages: BookPage[]): void {
+/**
+ * In-process cache of parsed page maps keyed by the file's mtime, with a pre-lowercased
+ * copy for `findPageForText`. Multi-MB JSON used to be parsed per rendered section.
+ */
+const pagesCache = new Map<string, { mtimeMs: number; size: number; pages: BookPage[]; lower: string[] | null }>();
+
+function pagesPath(bookId: string): string {
+  return join(TEXTS_DIR, `${bookId}.json`);
+}
+
+function bookFile(dir: string, bookId: string, ext: string): string {
+  return join(dir, `${bookId}.${ext}`);
+}
+
+function loadPagesEntry(bookId: string) {
+  if (!isValidBookId(bookId)) return null;
   ensureDataDir();
-  writeFileSync(join(TEXTS_DIR, `${bookId}.json`), JSON.stringify(pages));
+  const p = pagesPath(bookId);
+  if (!existsSync(p)) {
+    pagesCache.delete(bookId);
+    return null;
+  }
+  const st = statSync(p);
+  const cached = pagesCache.get(bookId);
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached;
+  const pages = JSON.parse(readFileSync(p, "utf-8")) as BookPage[];
+  const entry = { mtimeMs: st.mtimeMs, size: st.size, pages, lower: null };
+  pagesCache.set(bookId, entry);
+  return entry;
+}
+
+export function saveBookPages(bookId: string, pages: BookPage[]): void {
+  assertBookId(bookId);
+  ensureDataDir();
+  writeJsonAtomic(pagesPath(bookId), pages, false);
+  pagesCache.delete(bookId);
 }
 
 export function loadBookPages(bookId: string): BookPage[] | null {
-  ensureDataDir();
-  const p = join(TEXTS_DIR, `${bookId}.json`);
-  if (!existsSync(p)) return null;
-  return JSON.parse(readFileSync(p, "utf-8"));
+  return loadPagesEntry(bookId)?.pages ?? null;
+}
+
+function deleteBookPagesFile(bookId: string): void {
+  const p = pagesPath(bookId);
+  if (existsSync(p)) unlinkSync(p);
+  pagesCache.delete(bookId);
 }
 
 export function saveBookSpecialistProfile(profile: BookSpecialistProfile): void {
+  assertBookId(profile.bookId);
   ensureDataDir();
-  writeFileSync(
-    join(SPECIALISTS_DIR, `${profile.bookId}.json`),
-    JSON.stringify(profile, null, 2)
-  );
+  writeJsonAtomic(join(SPECIALISTS_DIR, `${profile.bookId}.json`), profile);
 }
 
 export function loadBookSpecialistProfile(bookId: string): BookSpecialistProfile | null {
+  if (!isValidBookId(bookId)) return null;
   ensureDataDir();
-  const p = join(SPECIALISTS_DIR, `${bookId}.json`);
+  const p = bookFile(SPECIALISTS_DIR, bookId, "json");
   if (!existsSync(p)) return null;
   try {
     return JSON.parse(readFileSync(p, "utf-8")) as BookSpecialistProfile;
@@ -219,17 +269,27 @@ export function searchBookKeyword(
 
   const lowerKeywords = keywords.map((k) => k.toLowerCase());
   const matches: PageMatch[] = [];
+  const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}_]/u.test(c);
 
   for (const page of pages) {
     const lowerText = page.text.toLowerCase();
     for (const kw of lowerKeywords) {
+      // Whole-word match for plain words ("ship" must not hit "relationship");
+      // phrases with punctuation are matched as substrings.
+      const wholeWord = /^[\p{L}\p{N}_]+$/u.test(kw);
       let startIdx = 0;
       while (true) {
         const idx = lowerText.indexOf(kw, startIdx);
         if (idx === -1) break;
+        startIdx = idx + kw.length;
+        if (
+          wholeWord &&
+          (isWordChar(lowerText[idx - 1]) || isWordChar(lowerText[idx + kw.length]))
+        ) {
+          continue;
+        }
         matches.push({ label: page.label, snippet: createSnippet(page.text, idx, kw.length) });
         if (matches.length >= maxMatches) return matches;
-        startIdx = idx + kw.length;
       }
     }
   }
@@ -411,19 +471,61 @@ export function searchExactQuoteInSeries(
   return allMatches;
 }
 
+const CATALOG_BACKUP_FILE = `${CATALOG_FILE}.bak`;
+let catalogCache: { mtimeMs: number; size: number; catalog: BookCatalog } | null = null;
+
+function parseCatalogFile(path: string): BookCatalog {
+  const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<BookCatalog>;
+  return {
+    books: Array.isArray(parsed.books) ? parsed.books : [],
+    series: Array.isArray(parsed.series) ? parsed.series : [],
+  };
+}
+
+/**
+ * Parsed catalog cached by books.json mtime/size; callers get a clone so they can
+ * mutate freely before `saveCatalog`. An unparsable books.json falls back to the
+ * `.bak` copy written just before the last save.
+ */
 function loadCatalog(): BookCatalog {
   ensureDataDir();
   if (!existsSync(CATALOG_FILE)) return { books: [], series: [] };
-  const parsed = JSON.parse(readFileSync(CATALOG_FILE, "utf-8")) as Partial<BookCatalog>;
-  return {
-    books: parsed.books || [],
-    series: parsed.series || [],
-  };
+  const st = statSync(CATALOG_FILE);
+  if (catalogCache && catalogCache.mtimeMs === st.mtimeMs && catalogCache.size === st.size) {
+    return structuredClone(catalogCache.catalog);
+  }
+  let catalog: BookCatalog;
+  try {
+    catalog = parseCatalogFile(CATALOG_FILE);
+  } catch (error) {
+    console.error(`books.json is unreadable (${error instanceof Error ? error.message : String(error)})`);
+    if (existsSync(CATALOG_BACKUP_FILE)) {
+      console.error("Falling back to books.json.bak");
+      try {
+        catalog = parseCatalogFile(CATALOG_BACKUP_FILE);
+      } catch (bakError) {
+        throw new Error(
+          `Both ${CATALOG_FILE} and its .bak copy are unreadable: ${bakError instanceof Error ? bakError.message : String(bakError)}`
+        );
+      }
+    } else {
+      throw new Error(`${CATALOG_FILE} is corrupt and no .bak copy exists; fix or remove it to continue.`);
+    }
+  }
+  catalogCache = { mtimeMs: st.mtimeMs, size: st.size, catalog };
+  return structuredClone(catalog);
 }
 
 function saveCatalog(catalog: BookCatalog) {
   ensureDataDir();
-  writeFileSync(CATALOG_FILE, JSON.stringify(catalog, null, 2));
+  try {
+    if (existsSync(CATALOG_FILE)) copyFileSync(CATALOG_FILE, CATALOG_BACKUP_FILE);
+  } catch (error) {
+    console.warn("Could not write books.json.bak:", error);
+  }
+  writeJsonAtomic(CATALOG_FILE, catalog);
+  const st = statSync(CATALOG_FILE);
+  catalogCache = { mtimeMs: st.mtimeMs, size: st.size, catalog: structuredClone(catalog) };
 }
 
 export function loadSettings(): AISettings {
@@ -509,7 +611,7 @@ export function saveSettings(settings: AISettings): void {
       extractionModelId: settings.modelRouting?.extractionModelId || undefined,
     },
   };
-  writeFileSync(SETTINGS_FILE, JSON.stringify(normalized, null, 2));
+  writeJsonAtomic(SETTINGS_FILE, normalized);
 }
 
 function createIndex(): LocalDocumentIndex {
@@ -536,18 +638,48 @@ async function getIndex(): Promise<LocalDocumentIndex> {
   return _index;
 }
 
+/**
+ * Drop the in-memory Vectra index so the next access re-reads `index/` from disk.
+ * Call after anything that replaces the index files behind our back (backup restore),
+ * otherwise the stale `_data` would be written over the restored index on the next update.
+ */
+export function resetIndexCache(): void {
+  _index = null;
+  pagesCache.clear();
+  catalogCache = null;
+}
+
+/**
+ * Serializes Vectra updates. `upsertDocument`/`deleteDocument` each do
+ * beginUpdate → endUpdate and throw "Update already in progress" when they overlap
+ * (an upload during a reindex). Simple promise-chain mutex; errors don't break the chain.
+ */
+let indexLock: Promise<void> = Promise.resolve();
+
+function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = indexLock.then(fn, fn);
+  indexLock = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
 export function saveCover(bookId: string, imageBuffer: Buffer, mimeType: string): boolean {
+  assertBookId(bookId);
   ensureDataDir();
   const ext = mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : "jpg";
-  const coverPath = join(COVERS_DIR, `${bookId}.${ext}`);
+  const coverPath = bookFile(COVERS_DIR, bookId, ext);
   writeFileSync(coverPath, imageBuffer);
   return true;
 }
 
 export function getCoverPath(bookId: string): string | null {
+  if (!isValidBookId(bookId)) return null;
   ensureDataDir();
+  if (!isValidBookId(bookId)) return null;
   for (const ext of ["jpg", "png", "gif", "jpeg", "webp"]) {
-    const p = join(COVERS_DIR, `${bookId}.${ext}`);
+    const p = bookFile(COVERS_DIR, bookId, ext);
     if (existsSync(p)) return p;
   }
   return null;
@@ -565,47 +697,76 @@ export async function addBook(
   filename: string,
   text: string,
   wordCount: number,
-  opts: { hasCover?: boolean; author?: string; fileType?: string; seriesId?: string } = {}
+  opts: {
+    hasCover?: boolean;
+    author?: string;
+    fileType?: string;
+    seriesId?: string;
+    /** When given, the page map is written to texts/ before the index and catalog, and removed again if either fails. */
+    pages?: BookPage[];
+  } = {}
 ): Promise<BookEntry> {
   const id = `book-${Date.now()}`;
   const index = await getIndex();
 
-  await index.upsertDocument(id, text, "book", { title, bookId: id });
+  if (opts.pages) saveBookPages(id, opts.pages);
 
-  const catalog = loadCatalog();
-  const entry: BookEntry = {
-    id,
-    title,
-    filename,
-    wordCount,
-    addedAt: new Date().toISOString(),
-    hasCover: opts.hasCover,
-    author: opts.author,
-    fileType: opts.fileType,
-    seriesId: opts.seriesId,
-  };
-  catalog.books.push(entry);
-  if (opts.seriesId) {
-    const series = catalog.series.find((s) => s.id === opts.seriesId);
-    if (series && !series.bookIds.includes(entry.id)) {
-      series.bookIds.push(entry.id);
+  try {
+    await withIndexLock(() => index.upsertDocument(id, text, "book", { title, bookId: id }));
+
+    const catalog = loadCatalog();
+    const entry: BookEntry = {
+      id,
+      title,
+      filename,
+      wordCount,
+      addedAt: new Date().toISOString(),
+      hasCover: opts.hasCover,
+      author: opts.author,
+      fileType: opts.fileType,
+      seriesId: opts.seriesId,
+    };
+    catalog.books.push(entry);
+    if (opts.seriesId) {
+      const series = catalog.series.find((s) => s.id === opts.seriesId);
+      if (series && !series.bookIds.includes(entry.id)) {
+        series.bookIds.push(entry.id);
+      }
     }
-  }
-  saveCatalog(catalog);
+    try {
+      saveCatalog(catalog);
+    } catch (error) {
+      // Catalog write failed after the index took the document: don't leave an orphan.
+      await withIndexLock(() => index.deleteDocument(id)).catch((e) =>
+        console.error("Rollback of index document failed:", e)
+      );
+      throw error;
+    }
 
-  return entry;
+    return entry;
+  } catch (error) {
+    if (opts.pages) {
+      try {
+        deleteBookPagesFile(id);
+      } catch (e) {
+        console.error("Rollback of pages file failed:", e);
+      }
+    }
+    throw error;
+  }
 }
 
 function deleteCoverFiles(bookId: string): void {
   for (const ext of ["jpg", "png", "gif", "jpeg", "webp"]) {
-    const p = join(COVERS_DIR, `${bookId}.${ext}`);
+    const p = bookFile(COVERS_DIR, bookId, ext);
     if (existsSync(p)) unlinkSync(p);
   }
 }
 
 export async function deleteBook(bookId: string): Promise<void> {
+  assertBookId(bookId);
   const index = await getIndex();
-  await index.deleteDocument(bookId);
+  await withIndexLock(() => index.deleteDocument(bookId));
 
   const catalog = loadCatalog();
   catalog.books = catalog.books.filter((b) => b.id !== bookId);
@@ -615,11 +776,25 @@ export async function deleteBook(bookId: string): Promise<void> {
   catalog.series = catalog.series.filter((s) => s.bookIds.length > 0);
   saveCatalog(catalog);
 
-  const textPath = join(TEXTS_DIR, `${bookId}.json`);
-  if (existsSync(textPath)) unlinkSync(textPath);
+  deleteBookPagesFile(bookId);
   const specialistPath = join(SPECIALISTS_DIR, `${bookId}.json`);
   if (existsSync(specialistPath)) unlinkSync(specialistPath);
   deleteCoverFiles(bookId);
+
+  // Everything else that references the id (best effort; the book itself is already gone).
+  const cleanups: Array<[string, () => void]> = [
+    ["knowledge", () => removeBookFromKnowledge(bookId)],
+    ["quality", () => removeBookFromQuality(bookId)],
+    ["shares", () => removeBookFromShares(bookId)],
+    ["chats", () => deleteChatsForBook(bookId)],
+  ];
+  for (const [what, fn] of cleanups) {
+    try {
+      fn();
+    } catch (error) {
+      console.error(`deleteBook: ${what} cleanup failed for ${bookId}:`, error);
+    }
+  }
 }
 
 export async function deleteAllBooks(): Promise<number> {
@@ -709,6 +884,7 @@ export function saveSeries(entry: { id?: string; name: string; bookIds: string[]
 }
 
 export function deleteSeries(seriesId: string): void {
+  if (!isValidSeriesId(seriesId)) throw new InvalidIdError("series", seriesId);
   const catalog = loadCatalog();
   catalog.series = catalog.series.filter((s) => s.id !== seriesId);
   for (const book of catalog.books) {
@@ -970,7 +1146,47 @@ export async function reconcileLibrarySeries(opts?: {
     }
   }
 
-  saveCatalog(catalog);
+  // The Open Library calls above can take minutes; books may have been added or removed
+  // meanwhile. Re-load and merge only what this pass computed (series membership/order
+  // and edition metadata) onto the fresh catalog, never replacing its book list.
+  const fresh = loadCatalog();
+  const computedBooks = new Map(catalog.books.map((b) => [b.id, b]));
+  const freshIds = new Set(fresh.books.map((b) => b.id));
+  for (const book of fresh.books) {
+    const computed = computedBooks.get(book.id);
+    if (!computed) continue; // added meanwhile: keep as is
+    book.seriesId = computed.seriesId;
+    book.seriesOrder = computed.seriesOrder;
+    if (computed.isbn) book.isbn = computed.isbn;
+    if (computed.publishedYear) book.publishedYear = computed.publishedYear;
+  }
+  const mergedSeriesList: SeriesEntry[] = catalog.series.map((s) => ({
+    ...s,
+    bookIds: s.bookIds.filter((id) => freshIds.has(id)),
+  }));
+  const mergedIds = new Set(mergedSeriesList.map((s) => s.id));
+  for (const s of fresh.series) {
+    if (mergedIds.has(s.id)) continue;
+    // A series created meanwhile (e.g. by an upload): keep it for the books still pointing at it.
+    const members = fresh.books.filter((b) => b.seriesId === s.id).map((b) => b.id);
+    if (members.length) mergedSeriesList.push({ ...s, bookIds: members });
+  }
+  // Books added meanwhile that point at a series this pass absorbed/removed: attach them to
+  // the live series with that id if it exists, else leave them unassigned.
+  const liveMerged = new Set(mergedSeriesList.map((s) => s.id));
+  for (const book of fresh.books) {
+    if (computedBooks.has(book.id)) continue;
+    if (!book.seriesId) continue;
+    if (!liveMerged.has(book.seriesId)) {
+      book.seriesId = undefined;
+      continue;
+    }
+    const target = mergedSeriesList.find((s) => s.id === book.seriesId);
+    if (target && !target.bookIds.includes(book.id)) target.bookIds.push(book.id);
+  }
+  fresh.series = mergedSeriesList.filter((s) => s.bookIds.length > 0);
+
+  saveCatalog(fresh);
   return {
     updatedBooks,
     createdSeries,
@@ -1052,20 +1268,22 @@ export interface PassageResult {
 }
 
 function findPageForText(bookId: string, chunkText: string): string {
-  const pages = loadBookPages(bookId);
-  if (!pages) return "Unknown location";
+  const entry = loadPagesEntry(bookId);
+  if (!entry) return "Unknown location";
+  if (!entry.lower) entry.lower = entry.pages.map((p) => p.text.toLowerCase());
+  const { pages, lower } = entry;
 
   const needle = chunkText.slice(0, 80).replace(/\s+/g, " ").trim().toLowerCase();
-  for (const page of pages) {
-    if (page.text.toLowerCase().includes(needle)) {
-      return page.label;
+  for (let i = 0; i < lower.length; i++) {
+    if (lower[i].includes(needle)) {
+      return pages[i].label;
     }
   }
 
   const shortNeedle = chunkText.slice(0, 40).replace(/\s+/g, " ").trim().toLowerCase();
-  for (const page of pages) {
-    if (page.text.toLowerCase().includes(shortNeedle)) {
-      return page.label;
+  for (let i = 0; i < lower.length; i++) {
+    if (lower[i].includes(shortNeedle)) {
+      return pages[i].label;
     }
   }
 
@@ -1115,19 +1333,27 @@ interface ChatEntry {
   updatedAt: string;
 }
 
+function chatFile(chatId: string): string {
+  return join(CHATS_DIR, `${chatId}.json`);
+}
+
 function ensureChatsDir() {
   ensureDataDir();
   if (!existsSync(CHATS_DIR)) mkdirSync(CHATS_DIR, { recursive: true });
 }
 
 export function saveChat(chat: ChatEntry): void {
+  if (!chat || typeof chat !== "object") throw new InvalidIdError("chat", chat);
+  if (!isValidChatId(chat.id)) throw new InvalidIdError("chat", chat?.id);
+  if (!Array.isArray(chat.messages)) throw new Error("Chat body must have a messages array");
   ensureChatsDir();
-  writeFileSync(join(CHATS_DIR, `${chat.id}.json`), JSON.stringify(chat, null, 2));
+  writeJsonAtomic(join(CHATS_DIR, `${chat.id}.json`), chat);
 }
 
 export function loadChat(chatId: string): ChatEntry | null {
+  if (!isValidChatId(chatId)) return null;
   ensureChatsDir();
-  const p = join(CHATS_DIR, `${chatId}.json`);
+  const p = chatFile(chatId);
   if (!existsSync(p)) return null;
   return JSON.parse(readFileSync(p, "utf-8"));
 }
@@ -1154,9 +1380,30 @@ export function listChats(): Omit<ChatEntry, "messages">[] {
 }
 
 export function deleteChat(chatId: string): void {
+  if (!isValidChatId(chatId)) throw new InvalidIdError("chat", chatId);
   ensureChatsDir();
-  const p = join(CHATS_DIR, `${chatId}.json`);
+  const p = chatFile(chatId);
   if (existsSync(p)) unlinkSync(p);
+}
+
+/** Remove saved conversations whose focus was the given book. */
+export function deleteChatsForBook(bookId: string): number {
+  assertBookId(bookId);
+  ensureChatsDir();
+  let removed = 0;
+  for (const file of readdirSync(CHATS_DIR).filter((f: string) => f.endsWith(".json"))) {
+    const p = join(CHATS_DIR, file);
+    try {
+      const raw = JSON.parse(readFileSync(p, "utf-8")) as { bookId?: string };
+      if (raw.bookId === bookId) {
+        unlinkSync(p);
+        removed++;
+      }
+    } catch {
+      /* skip corrupt files */
+    }
+  }
+  return removed;
 }
 
 export async function queryAllBooks(
@@ -1211,9 +1458,13 @@ export async function querySeriesBooks(
 }
 
 export async function rebuildBookIndex(bookId: string): Promise<void> {
+  assertBookId(bookId);
   const pages = loadBookPages(bookId);
   if (!pages?.length) return;
   const index = await getIndex();
-  const merged = pages.map((p) => `[${p.label}]\n${p.text}`).join("\n\n");
-  await index.upsertDocument(bookId, merged, "book", { bookId });
+  // Same text shape as ingest (`addBook` gets the raw page texts joined by blank lines,
+  // no `[label]` prefixes), so chunks match `findPageForText` and citations keep their page.
+  const merged = pages.map((p) => p.text).join("\n\n");
+  const title = getBookById(bookId)?.title;
+  await withIndexLock(() => index.upsertDocument(bookId, merged, "book", title ? { title, bookId } : { bookId }));
 }

@@ -9,6 +9,58 @@ export function titleFromFilename(filename: string): string {
   return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 }
 
+/**
+ * Title shown in the library, built at ingest. Prefers the book's own metadata
+ * title; otherwise cleans the filename: format tags, the author's name in any
+ * order, "(Series Book N)" / "Series Book N" tails, and lower-case-only names.
+ */
+export function cleanIngestTitle(opts: {
+  filename: string;
+  metadataTitle?: string | null;
+  author?: string | null;
+  seriesName?: string | null;
+}): string {
+  const meta = (opts.metadataTitle || "").replace(/\s+/g, " ").trim();
+  if (meta && meta.length >= 2 && !/\.(epub|pdf|txt)$/i.test(meta)) return meta;
+
+  let t = titleFromFilename(opts.filename).replace(/\s+/g, " ").trim();
+  t = t.replace(/[\[(]\s*(?:epub|pdf|txt|mobi|azw3?|kindle|retail|ebook)\s*[\])]/gi, " ");
+  if (opts.seriesName) {
+    const words = opts.seriesName.split(/\s+/).filter(Boolean).map(escapeRe);
+    if (words.length) {
+      // "(Expeditionary Force Book 6)", "Expeditionary Force Book 6", "Expeditionary Force 6"
+      t = t.replace(
+        new RegExp(
+          `[\\[(]?\\s*${words.join("\\s+")}(?:\\s*(?:,|-|:)?\\s*(?:book|bk|vol(?:ume)?|#)?\\s*\\d+(?:\\.\\d+)?)?\\s*[\\])]?`,
+          "gi"
+        ),
+        " "
+      );
+    }
+  }
+  if (opts.author) {
+    const names = opts.author.split(/[\s,]+/).filter((w) => w.length > 1).map(escapeRe);
+    if (names.length) {
+      // the author's names in any order, as a run ("Craig Alanson", "alanson craig", "Alanson, Craig")
+      t = t.replace(
+        new RegExp(`(?:\\b(?:${names.join("|")})\\b[\\s,]*){${Math.min(names.length, 2)},}`, "gi"),
+        " "
+      );
+    }
+  }
+  t = t.replace(/\b(?:book|bk|vol(?:ume)?)\s*\d+(?:\.\d+)?\b/gi, " ");
+  t = t.replace(/\(\s*\)|\[\s*\]/g, " ");
+  t = t.replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, "").replace(/\s+/g, " ").trim();
+  if (t && t === t.toLowerCase()) {
+    t = t.replace(/\b([a-z])(\w*)/g, (_m, a: string, rest: string) => a.toUpperCase() + rest);
+  }
+  return t || titleFromFilename(opts.filename);
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function normalizeTextId(input: string): string {
   return input
     .toLowerCase()

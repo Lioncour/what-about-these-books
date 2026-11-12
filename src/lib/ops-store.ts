@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
-import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { copyFileSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, ensureDataDir, ensureDir } from "@/lib/runtime-config";
+import { DATA_DIR, ensureDataDir, ensureDir, InvalidIdError, isValidBackupId, writeJsonAtomic } from "@/lib/runtime-config";
 
 const OPS_DIR = join(DATA_DIR, "ops");
 const SAVED_SEARCH_FILE = join(OPS_DIR, "saved-searches.json");
@@ -58,7 +58,7 @@ function loadJson<T>(path: string, fallback: T): T {
 
 function saveJson(path: string, value: unknown): void {
   ensureOps();
-  writeFileSync(path, JSON.stringify(value, null, 2));
+  writeJsonAtomic(path, value);
 }
 
 export function listSavedSearches(): SavedSearch[] {
@@ -139,6 +139,16 @@ export function listShareLinks(): ShareLink[] {
   return loadJson<ShareLink[]>(SHARE_FILE, []);
 }
 
+/** Drop a deleted book from every share link; links left with no books are removed. */
+export function removeBookFromShares(bookId: string): void {
+  const rows = listShareLinks();
+  if (!rows.some((s) => s.bookIds.includes(bookId))) return;
+  const next = rows
+    .map((s) => ({ ...s, bookIds: s.bookIds.filter((id) => id !== bookId) }))
+    .filter((s) => s.bookIds.length > 0);
+  saveJson(SHARE_FILE, next);
+}
+
 export function findShareByToken(token: string): ShareLink | null {
   const row = listShareLinks().find((s) => s.token === token);
   if (!row) return null;
@@ -189,8 +199,12 @@ export function listBackups(): { backupId: string; createdAt: string; sizeBytes:
 }
 
 export function restoreBackup(backupId: string): void {
+  // Only ids the listing knows: `..` would make `src` the data dir itself and wipe it.
+  if (!isValidBackupId(backupId) || !listBackups().some((b) => b.backupId === backupId)) {
+    throw new InvalidIdError("backup", backupId);
+  }
   const src = join(BACKUP_DIR, backupId);
-  if (!existsSync(src)) throw new Error(`Backup not found: ${backupId}`);
+  if (!existsSync(src) || !statSync(src).isDirectory()) throw new Error(`Backup not found: ${backupId}`);
   const entries = readdirSync(src);
   for (const entry of entries) {
     const from = join(src, entry);

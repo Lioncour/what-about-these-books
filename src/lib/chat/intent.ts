@@ -17,12 +17,60 @@ export function normalizeUserQuestion(input: string): string {
     .trim();
 }
 
-const MENTION_VERB =
-  "(?:get\\s+|getting\\s+)?(?:mentioned|mentions?|appear(?:s|ed|ing)?|occurs?|used|said|named)";
+/**
+ * "appear" only counts as a mention verb when nothing but a location / end follows:
+ * "how often does Joe appear?" yes, "how often does Joe appear nervous?" no.
+ */
+const APPEAR_TAIL =
+  "appear(?:s|ed|ing)?(?=\\s*(?:[?.!,]|$|(?:in|across|throughout|within|during|on|by|at|anywhere|again|here|there)\\b))";
+const MENTION_VERB = `(?:get\\s+|getting\\s+)?(?:mentioned|mentions?|${APPEAR_TAIL}|occurs?|used|said|named)`;
+const MENTION_HINT_RE = new RegExp(`ment+i+one?d|${APPEAR_TAIL}|occurs?|\\bused\\b|show up|named`, "i");
 
+/** First quoted string only (a negated class can't span `"A" and "B"`). */
 export function extractQuotedText(input: string): string | null {
-  const match = input.match(/["“”](.{20,}?)["“”]/);
+  const match = input.match(/["“”]([^"“”\n]{20,})["“”]/);
   return match?.[1]?.trim() || null;
+}
+
+/**
+ * Text to run exact-quote lookup on: only when the user asks to find a quote, or the
+ * message is nothing but the quote. A long quoted string inside a normal question
+ * ("What does 'x…' mean?") must not force exact-quote mode.
+ */
+export function resolveQuoteMode(question: string): string | null {
+  const quoted = extractQuotedText(question);
+  if (looksLikeQuoteLookup(question)) return quoted || question;
+  if (!quoted) return null;
+  const bare = question.replace(/["“”]/g, "").replace(/[?.!\s]+$/g, "").trim();
+  return bare.toLowerCase() === quoted.replace(/[?.!\s]+$/g, "").trim().toLowerCase() ? quoted : null;
+}
+
+const KEYWORD_STOPWORDS = new Set([
+  "what", "when", "where", "which", "while", "whose", "does", "did", "do", "about", "with",
+  "from", "into", "that", "this", "these", "those", "there", "their", "them", "they", "then",
+  "than", "have", "has", "had", "been", "being", "were", "was", "will", "would", "could",
+  "should", "shall", "might", "must", "also", "just", "like", "some", "such", "very", "more",
+  "most", "much", "many", "each", "every", "other", "another", "over", "under", "after",
+  "before", "again", "between", "through", "during", "because", "first", "last", "tell",
+  "please", "explain", "describe", "think", "thinks", "know", "find", "show", "give", "want",
+  "book", "books", "library", "series", "chapter", "page", "pages", "story", "novel", "text",
+  "character", "characters", "happen", "happens", "happened", "mean", "means", "meaning",
+  "ever", "really", "actually", "anything", "something", "everything", "nothing", "someone",
+  "anyone", "everyone", "your", "yours", "mine", "ours", "here", "where", "whom", "why", "how",
+  "into", "onto", "upon", "within", "without", "around", "across", "along", "toward",
+]);
+
+/** Content words for a keyword sweep: no stopwords, ≥ 4 chars, at most 6. */
+export function extractKeywords(question: string, max = 6): string[] {
+  const out: string[] = [];
+  for (const raw of question.replace(/[^\w\s'-]/g, " ").split(/\s+/)) {
+    const w = raw.replace(/^['-]+|['-]+$/g, "").toLowerCase();
+    if (w.length < 4 || /^\d+$/.test(w) || KEYWORD_STOPWORDS.has(w)) continue;
+    if (out.includes(w)) continue;
+    out.push(w);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function looksLikeQuoteLookup(input: string): boolean {
@@ -47,7 +95,9 @@ export function isPronounTarget(value: string): boolean {
 export function normalizeEntityTarget(raw: string): string {
   return raw
     .trim()
-    .replace(/^(and|about|for|of|is|was|are|were|does|do|did|the|a|an|word|name)\s+/i, "")
+    .replace(/^(and|about|for|of|is|was|are|were|does|do|did|a|an|word|name)\s+/i, "")
+    // Keep a leading "the" when it belongs to the name ("the Elders"); drop it before lowercase.
+    .replace(/^[Tt]he\s+(?=[a-z])/, "")
     .replace(
       /\s+(?:in|across|throughout|within)\s+(?:this|the|my|your|entire|whole|full)?\s*(?:book|books|library|series|novels?|texts?)(?:\b.*)?$/i,
       ""
@@ -81,7 +131,7 @@ export function extractMentionCountTarget(input: string): string | null {
   // Fallback: name sitting between times/often and mention/appear
   if (
     /how\s+man+y?\s+times|how\s+often|count\b/i.test(text) &&
-    /ment+i+one?d|appear|occurs?|used|named/i.test(text)
+    MENTION_HINT_RE.test(text)
   ) {
     const between = text.match(
       /(?:times|often)\s+(?:is\s+|was\s+|are\s+|were\s+|does\s+|do\s+|the\s+(?:name|word)\s+)?["“”']?([A-Za-z][\w'-]{1,40})["“”']?\s+\w*ment/i
@@ -204,7 +254,7 @@ export function looksLikeMentionCountQuestion(input: string): boolean {
   const text = normalizeUserQuestion(input).toLowerCase();
   if (
     /how\s+man+y?\s+times|how\s+often/i.test(text) &&
-    /ment+i+one?d|appear|occurs?|used|show up|named/i.test(text)
+    MENTION_HINT_RE.test(text)
   ) {
     return true;
   }
@@ -395,16 +445,37 @@ export function resolveCountTarget(input: string, messages: ChatMessage[]): stri
   return null;
 }
 
+/** "Who are the main characters / protagonists?" — not "Is Skippy the main character?". */
 export function looksLikeMainCharacterQuestion(input: string): boolean {
-  return /main character|main characters|primary character|protagonist/i.test(input);
+  if (/\bis\s+(?!(?:the|a|an)\b)\S+(?:\s+\S+)?\s+(?:the\s+|a\s+)?(?:main|primary|central)\s+(?:character|protagonist)\b/i.test(input)) {
+    return false;
+  }
+  return /\b(?:main|primary|central|key)\s+characters\b|\bprotagonists\b|\bwho\s+(?:is|are|was|were)\s+the\s+(?:main|primary|central)\s+(?:characters?|protagonists?)\b/i.test(
+    input
+  );
 }
 
+/** "Who is Joe?" → "Joe"; stops at " in ", " with", "?"; 1–3 capitalised words only. */
 export function extractWhoIsTarget(input: string): string | null {
   const m = input.match(/\bwho is\s+["“”']?([^"“”'?\n]+?)["“”']?(?:\?|$)/i);
   if (!m?.[1]) return null;
-  const value = m[1].trim().replace(/^(the|a|an)\s+/i, "").trim();
+  let value = m[1].trim();
+  value = value.split(/\s+(?:in|with|from|on|at|to|for|and|during|after|before)\s+/i)[0].trim();
+  value = value.replace(/[.,!;:]+$/g, "").trim();
+  // A capitalised name of 1-3 words, or a single lower-case word that isn't a
+  // function word ("who is skippy?"); "who is the author" is not a lookup.
+  const capitalised = /^[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,2}$/.test(value);
+  const single =
+    /^[a-z][\w'’-]{2,}$/.test(value) &&
+    !/^(the|this|that|your|their|his|her|its|our|he|she|it|they|you|who|what|which|there|here|everyone|someone|anyone|nobody)$/.test(
+      value
+    );
+  if (!capitalised && !single) return null;
   return value.length >= 2 ? value : null;
 }
+
+const PURE_GREETING_RE =
+  /^(?:hi|hello|hey|yo|hiya|howdy|thanks|thank you|thx|ok|okay|cool|nice|great|good (?:morning|afternoon|evening|night)|good job|well done)(?:\s+(?:there|again|claude|friend|buddy))?[\s!.,]*$/;
 
 export function shouldBypassSpecialists(input: string): boolean {
   const text = normalizeUserQuestion(input).trim().toLowerCase();
@@ -417,17 +488,19 @@ export function shouldBypassSpecialists(input: string): boolean {
     return true;
   }
   return (
-    /what can you do|who are you|how can you help|help me|what do you know|introduce yourself|hello|hi\b|hey\b/.test(
+    /what can you do|who are you|how can you help|what do you know|introduce yourself|\bhello\b|\bhi\b|\bhey\b/.test(
       text
     ) ||
-    (text.split(/\s+/).length <= 8 &&
-      !/book|books|chapter|page|quote|character|theme|plot|series|mentioned|mentions|find|count|timeline|entity|who is|have you read|did you read|did you finish|have you finished/.test(
-        text
-      ))
+    /(?:^|[.!?]\s+)(?:please\s+|can you\s+|could you\s+)?help me\b/.test(text) ||
+    PURE_GREETING_RE.test(text)
   );
 }
 
 export function looksLikeLibraryCountQuestion(input: string): boolean {
+  // "Which books in my library mention Mars?" is a content question, not a count.
+  if (/\b(?:which|what)\s+(?:of\s+(?:my|the|your)\s+)?books?\b.*\b(?:mention|mentions|about|contain|contains|include|includes|feature|features|have|has|talk|discuss|cover)/i.test(input)) {
+    return false;
+  }
   return /how many books|number of books|count (?:my )?books|books (?:do i|in (?:my )?library)/i.test(
     input
   );

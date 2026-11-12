@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listBooks, deleteBook, listDuplicateBookGroups, mergeDuplicateBooks } from "@/lib/book-store";
+import { listBooks, deleteBook, listDuplicateBookGroups, mergeDuplicateBooks, isValidBookId } from "@/lib/book-store";
+import { badRequest, errorResponse, publicModeBlocked } from "@/lib/api-guard";
 
 export async function GET(request: NextRequest) {
   const requestMode = request.nextUrl.searchParams.get("mode");
@@ -11,12 +12,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (process.env.PUBLIC_MODE === "true") {
-    return NextResponse.json(
-      { error: "Editing books is disabled in public mode." },
-      { status: 403 }
-    );
-  }
+  const blocked = publicModeBlocked("Editing books");
+  if (blocked) return blocked;
   try {
     const body = await request.json();
     if (body?.action === "duplicates") {
@@ -28,36 +25,31 @@ export async function POST(request: NextRequest) {
       if (!primaryBookId || !duplicateBookId) {
         return NextResponse.json({ error: "Missing merge book IDs" }, { status: 400 });
       }
+      if (!isValidBookId(primaryBookId) || !isValidBookId(duplicateBookId)) {
+        return badRequest("Invalid book id");
+      }
       const result = await mergeDuplicateBooks(primaryBookId, duplicateBookId);
       return NextResponse.json({ ok: true, result });
     }
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
-    console.error("Books POST error:", error);
-    return NextResponse.json({ error: "Failed to update books" }, { status: 500 });
+    return errorResponse(error, "Failed to update books");
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  if (process.env.PUBLIC_MODE === "true") {
-    return NextResponse.json(
-      { error: "Deleting books is disabled in public mode." },
-      { status: 403 }
-    );
-  }
+  const blocked = publicModeBlocked("Deleting books");
+  if (blocked) return blocked;
 
   try {
     const { bookId } = await request.json();
     if (!bookId) {
       return NextResponse.json({ error: "Missing book ID" }, { status: 400 });
     }
+    if (!isValidBookId(bookId)) return badRequest("Invalid book id");
     await deleteBook(bookId);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("Delete error:", error);
-    return NextResponse.json(
-      { error: "Failed to delete book" },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to delete book");
   }
 }

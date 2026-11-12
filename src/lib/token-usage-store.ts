@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, ensureDataDir, ensureDir } from "@/lib/runtime-config";
+import { DATA_DIR, ensureDataDir, ensureDir, writeJsonAtomic } from "@/lib/runtime-config";
 
 const OPS_DIR = join(DATA_DIR, "ops");
 const USAGE_FILE = join(OPS_DIR, "token-usage.json");
@@ -100,7 +100,55 @@ function loadFile(): UsageFile {
 function saveFile(data: UsageFile): void {
   ensureOps();
   data.updatedAt = new Date().toISOString();
-  writeFileSync(USAGE_FILE, JSON.stringify(data, null, 2));
+  writeJsonAtomic(USAGE_FILE, data);
+}
+
+// --- Batched persistence --------------------------------------------------
+// Every embedding call used to parse and rewrite this file synchronously, on the hot
+// path of a Vectra upsert (hundreds of chunks per upload). The file is now loaded once
+// into memory, mutated there, and flushed at most every FLUSH_INTERVAL_MS or at exit.
+
+const FLUSH_INTERVAL_MS = 2000;
+let memory: UsageFile | null = null;
+let dirty = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getData(): UsageFile {
+  if (!memory) memory = loadFile();
+  return memory;
+}
+
+function flushNow(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (!dirty || !memory) return;
+  try {
+    saveFile(memory);
+    dirty = false;
+  } catch (error) {
+    console.error("token-usage flush failed:", error);
+  }
+}
+
+function scheduleFlush(): void {
+  dirty = true;
+  if (flushTimer) return;
+  flushTimer = setTimeout(flushNow, FLUSH_INTERVAL_MS);
+  // Don't keep the process alive just for this timer.
+  if (typeof flushTimer === "object" && "unref" in flushTimer) flushTimer.unref();
+}
+
+if (!(globalThis as { __tokenUsageExitHook?: boolean }).__tokenUsageExitHook) {
+  (globalThis as { __tokenUsageExitHook?: boolean }).__tokenUsageExitHook = true;
+  process.once("exit", flushNow);
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.once(sig, () => {
+      flushNow();
+      process.exit();
+    });
+  }
 }
 
 function dayKey(iso: string): string {
@@ -129,7 +177,7 @@ export function recordTokenUsage(input: {
     streamed: input.streamed,
   };
 
-  const data = loadFile();
+  const data = getData();
   data.events.push(event);
   if (data.events.length > MAX_EVENTS) {
     data.events = data.events.slice(-MAX_EVENTS);
@@ -172,16 +220,18 @@ export function recordTokenUsage(input: {
     data.byModel[modelKey].outputTokens += outputTokens;
   }
 
-  saveFile(data);
+  scheduleFlush();
   return event;
 }
 
 export function resetTokenUsage(): void {
-  saveFile(emptyFile());
+  memory = emptyFile();
+  dirty = true;
+  flushNow();
 }
 
 export function getTokenUsageSummary() {
-  const data = loadFile();
+  const data = getData();
   const today = dayKey(new Date().toISOString());
   const todayUsage = data.byDay[today] || emptyDay();
 

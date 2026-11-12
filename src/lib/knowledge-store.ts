@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { BookPage } from "@/lib/book-store";
-import { DATA_DIR, ensureDir, ensureDataDir } from "@/lib/runtime-config";
+import { DATA_DIR, ensureDir, ensureDataDir, writeJsonAtomic } from "@/lib/runtime-config";
 
 const KNOWLEDGE_DIR = join(DATA_DIR, "knowledge");
 const GRAPH_FILE = join(KNOWLEDGE_DIR, "entity-graph.json");
@@ -66,7 +66,7 @@ function loadGraph(): EntityGraphStore {
 
 function saveGraph(graph: EntityGraphStore): void {
   ensureKnowledgeDir();
-  writeFileSync(GRAPH_FILE, JSON.stringify(graph, null, 2));
+  writeJsonAtomic(GRAPH_FILE, graph);
 }
 
 function loadTimeline(): TimelineStore {
@@ -81,8 +81,13 @@ function loadTimeline(): TimelineStore {
 
 function saveTimeline(timeline: TimelineStore): void {
   ensureKnowledgeDir();
-  writeFileSync(TIMELINE_FILE, JSON.stringify(timeline, null, 2));
+  writeJsonAtomic(TIMELINE_FILE, timeline);
 }
+
+/** Co-mention edges kept per page and evidence length: 39 x 220 chars per page made a
+ * 1000-page book add ~10 MB to one JSON file rewritten on every upload. */
+const MAX_EDGES_PER_PAGE = 8;
+const MAX_EVIDENCE_CHARS = 160;
 
 function classifyEntity(name: string): EntityNode["type"] {
   const lower = name.toLowerCase();
@@ -142,7 +147,9 @@ export function rebuildKnowledgeForBook(
       nodeMap.set(key, existing);
     }
 
-    for (let i = 0; i < entities.length - 1; i++) {
+    const evidence = page.text.slice(0, MAX_EVIDENCE_CHARS).replace(/\s+/g, " ").trim();
+    let pageEdges = 0;
+    for (let i = 0; i < entities.length - 1 && pageEdges < MAX_EDGES_PER_PAGE; i++) {
       const a = entities[i]?.toLowerCase();
       const b = entities[i + 1]?.toLowerCase();
       if (!a || !b || a === b) continue;
@@ -152,8 +159,9 @@ export function rebuildKnowledgeForBook(
         relation: "co-mentioned",
         bookId,
         location: page.label,
-        evidence: page.text.slice(0, 220).replace(/\s+/g, " ").trim(),
+        evidence,
       });
+      pageEdges++;
     }
 
     const events = extractEventSentences(page.text);
@@ -176,6 +184,27 @@ export function rebuildKnowledgeForBook(
   timeline.updatedAt = new Date().toISOString();
   saveGraph(graph);
   saveTimeline(timeline);
+}
+
+/** Remove a deleted book's nodes (or its membership in shared nodes), edges and timeline events. */
+export function removeBookFromKnowledge(bookId: string): void {
+  const graph = loadGraph();
+  const timeline = loadTimeline();
+  const touchedGraph =
+    graph.edges.some((e) => e.bookId === bookId) || graph.nodes.some((n) => n.books.includes(bookId));
+  if (touchedGraph) {
+    graph.nodes = graph.nodes
+      .map((n) => ({ ...n, books: n.books.filter((id) => id !== bookId) }))
+      .filter((n) => n.books.length > 0);
+    graph.edges = graph.edges.filter((e) => e.bookId !== bookId);
+    graph.updatedAt = new Date().toISOString();
+    saveGraph(graph);
+  }
+  if (timeline.events.some((e) => e.bookId === bookId)) {
+    timeline.events = timeline.events.filter((e) => e.bookId !== bookId);
+    timeline.updatedAt = new Date().toISOString();
+    saveTimeline(timeline);
+  }
 }
 
 export function getEntityGraph(): EntityGraphStore {

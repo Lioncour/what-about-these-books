@@ -1,8 +1,15 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { listBooks, loadBookPages, rebuildBookIndex, saveBookPages, saveBookSpecialistProfile } from "@/lib/book-store";
+import {
+  listBooks,
+  loadBookPages,
+  loadBookSpecialistProfile,
+  rebuildBookIndex,
+  saveBookPages,
+  saveBookSpecialistProfile,
+} from "@/lib/book-store";
 import { rebuildKnowledgeForBook } from "@/lib/knowledge-store";
-import { DATA_DIR, ensureDataDir, ensureDir } from "@/lib/runtime-config";
+import { DATA_DIR, ensureDataDir, ensureDir, writeJsonAtomic } from "@/lib/runtime-config";
 
 const REINDEX_DIR = join(DATA_DIR, "ops");
 const REINDEX_FILE = join(REINDEX_DIR, "reindex-state.json");
@@ -15,7 +22,12 @@ interface ReindexState {
   total: number;
   lastError?: string;
   currentBookId?: string;
+  /** Process that started the run; a persisted `running: true` from another pid is stale. */
+  pid?: number;
 }
+
+/** A run older than this is treated as crashed, whatever the file says. */
+const STALE_AFTER_MS = 30 * 60 * 1000;
 
 const defaultState: ReindexState = {
   running: false,
@@ -32,15 +44,30 @@ export function getReindexState(): ReindexState {
   ensureOpsDir();
   if (!existsSync(REINDEX_FILE)) return { ...defaultState };
   try {
-    return JSON.parse(readFileSync(REINDEX_FILE, "utf-8")) as ReindexState;
+    const state = JSON.parse(readFileSync(REINDEX_FILE, "utf-8")) as ReindexState;
+    if (state.running && isStale(state)) {
+      return {
+        ...state,
+        running: false,
+        currentBookId: undefined,
+        lastError: state.lastError || "Previous re-index did not finish (process exited or timed out).",
+      };
+    }
+    return state;
   } catch {
     return { ...defaultState };
   }
 }
 
+function isStale(state: ReindexState): boolean {
+  if (state.pid !== process.pid) return true;
+  const started = state.startedAt ? Date.parse(state.startedAt) : NaN;
+  return !Number.isFinite(started) || Date.now() - started > STALE_AFTER_MS;
+}
+
 function setReindexState(state: ReindexState): void {
   ensureOpsDir();
-  writeFileSync(REINDEX_FILE, JSON.stringify(state, null, 2));
+  writeJsonAtomic(REINDEX_FILE, state);
 }
 
 export async function startFullReindex(): Promise<ReindexState> {
@@ -53,6 +80,7 @@ export async function startFullReindex(): Promise<ReindexState> {
     startedAt: new Date().toISOString(),
     processed: 0,
     total: books.length,
+    pid: process.pid,
   };
   setReindexState(state);
 
@@ -67,7 +95,8 @@ export async function startFullReindex(): Promise<ReindexState> {
           saveBookPages(book.id, pages);
           await rebuildBookIndex(book.id);
           rebuildKnowledgeForBook({ bookId: book.id, bookTitle: book.title, pages });
-          saveBookSpecialistProfile({
+          // Keep a Claude-built profile; only books without one get the stub.
+          if (!loadBookSpecialistProfile(book.id)) saveBookSpecialistProfile({
             bookId: book.id,
             bookTitle: book.title,
             summary: `Reindexed specialist profile for "${book.title}".`,

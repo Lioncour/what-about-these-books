@@ -57,6 +57,7 @@ export async function orchestrateSpecialists(
     companionMode?: boolean;
     onToken?: (delta: string) => void;
     continuityHint?: string;
+    signal?: AbortSignal;
   }
 ): Promise<string> {
   if (isLibraryManagementInput(question)) {
@@ -74,7 +75,7 @@ export async function orchestrateSpecialists(
   const companion = opts?.companionMode !== false;
   const payload = JSON.stringify(specialists);
   const disagreements = summarizeSpecialistDisagreement(specialists);
-  const prompt =
+  const system =
     `${voicePreamble(companion)}\n\n` +
     `You are merging specialist reading notes into one final response in Markdown. ` +
     `${RESPONSE_FORMATTING_RULES}\n` +
@@ -82,19 +83,26 @@ export async function orchestrateSpecialists(
     `Do not invent facts not present in specialist payload.\n\n` +
     `If specialists disagree, add a clear "## Where the books disagree" section.\n` +
     (opts?.continuityHint ? `${opts.continuityHint}\n\n` : "") +
-    (personalityHint ? `Personality preferences:\n${personalityHint}\n\n` : "") +
-    `User question: ${question}\n\nKnown disagreement notes:\n${disagreements.join("\n") || "(none)"}\n\nSpecialist outputs JSON:\n${payload}`;
+    (personalityHint ? `Personality preferences:\n${personalityHint}\n\n` : "");
+  const prompt = `User question: ${question}\n\nKnown disagreement notes:\n${disagreements.join("\n") || "(none)"}\n\nSpecialist outputs JSON:\n${payload}`;
+  const callOpts = { system, signal: opts?.signal };
 
   const text = opts?.onToken
-    ? await callClaudeStream(prompt, opts.onToken, 2500, 0.2, modelId)
-    : await callClaudeText(prompt, 2500, 0.2, modelId);
+    ? await callClaudeStream(prompt, opts.onToken, 2500, 0.2, modelId, callOpts)
+    : await callClaudeText(prompt, 2500, 0.2, modelId, callOpts);
 
   if (!text?.trim() || looksLikeThinAnswer(text)) {
     const fallback = buildFallbackFromSpecialists(question, specialists);
-    if (opts?.onToken && !text?.trim()) {
+    if (!opts?.onToken) return fallback;
+    // Streaming: the client ignores TEXT once tokens have arrived and appends TOKENs,
+    // so the fallback goes out as more tokens after whatever thin text was streamed.
+    if (!text?.trim()) {
       opts.onToken(fallback);
+      return fallback;
     }
-    return fallback;
+    const combined = `${text.trimEnd()}\n\n${fallback}`;
+    opts.onToken(`\n\n${fallback}`);
+    return combined;
   }
   return text;
 }
@@ -105,6 +113,7 @@ export async function claudeNaturalAnswer(params: {
   factualAnswer: string;
   modelId?: string;
   companionMode?: boolean;
+  signal?: AbortSignal;
 }): Promise<string> {
   if (params.companionMode === false) {
     return params.factualAnswer;
@@ -131,6 +140,6 @@ Instructions:
 - Keep all numbers and factual claims exactly the same as provided.
 - Do not add new facts.
 - Do not use headings or tables unless the facts already require them.`;
-  const text = await callClaudeText(prompt, 450, 0.25, params.modelId);
+  const text = await callClaudeText(prompt, 450, 0.25, params.modelId, { signal: params.signal });
   return text?.trim() || params.factualAnswer;
 }

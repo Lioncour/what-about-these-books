@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listBooks, searchAllBooksKeyword, searchBookKeyword, searchSeriesKeyword } from "@/lib/book-store";
 import { deleteSavedSearch, listSavedSearches, saveSavedSearch } from "@/lib/ops-store";
+import { publicModeBlocked } from "@/lib/api-guard";
 
 function parsePageNumber(label?: string): number | null {
   if (!label) return null;
@@ -49,6 +50,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = publicModeBlocked("Saving searches");
+  if (blocked) return blocked;
   const body = await request.json();
   const saved = saveSavedSearch({
     id: body?.id ? String(body.id) : undefined,
@@ -66,6 +69,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const blocked = publicModeBlocked("Deleting saved searches");
+  if (blocked) return blocked;
   const id = request.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
   deleteSavedSearch(id);
