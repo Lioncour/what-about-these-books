@@ -202,13 +202,51 @@ function pickedScope(picked: BookRef[], question: string): Scope {
       };
     },
     mentionSeries: () => null,
-    selectSpecialistBooks: async () => ({
-      books: picked.slice(0, MAX_LIBRARY_SPECIALIST_BOOKS),
-      namedBooks: findNamedBooksInQuestion(question).filter((b) => ids.has(b.id)),
-      seedByTitle: new Map(),
-      reason: "picked",
-    }),
+    selectSpecialistBooks: async (q) => {
+      const namedBooks = findNamedBooksInQuestion(question).filter((b) => ids.has(b.id));
+      // Within the librarian limit every picked book is read, in the order picked.
+      if (picked.length <= MAX_LIBRARY_SPECIALIST_BOOKS) {
+        return { books: picked, namedBooks, seedByTitle: new Map(), reason: "picked" };
+      }
+      const ranked = await rankPickedBooks(picked, namedBooks, q || question);
+      return {
+        books: ranked.slice(0, MAX_LIBRARY_SPECIALIST_BOOKS),
+        namedBooks,
+        seedByTitle: new Map(),
+        reason: "picked",
+      };
+    },
   };
+}
+
+/** Passages fetched to rank a large pick: enough for every book of a big library to show up. */
+const PICKED_RANKING_PASSAGES = 240;
+
+/**
+ * More books picked than the librarians read: order them by how close each comes to
+ * the question. One semantic query over the library (one embedding of the question);
+ * its passages come back best first, so the first passage of a book is that book's best
+ * score, and the picked books are read in that order. Books the question names go
+ * first; picked books without any passage near the question keep their shelf order at
+ * the end. A failed query (index missing, Bedrock down) falls back to shelf order.
+ */
+export async function rankPickedBooks(picked: BookRef[], named: BookRef[], question: string): Promise<BookRef[]> {
+  const ids = new Set(picked.map((b) => b.id));
+  const order: string[] = [];
+  const add = (id: string) => {
+    if (ids.has(id) && !order.includes(id)) order.push(id);
+  };
+  for (const b of named) add(b.id);
+  if (question.trim()) {
+    try {
+      for (const passage of await queryAllBooks(question, PICKED_RANKING_PASSAGES)) add(passage.bookId);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+    }
+  }
+  for (const b of picked) add(b.id);
+  const byId = new Map(picked.map((b) => [b.id, b]));
+  return order.map((id) => byId.get(id)!);
 }
 
 /** What the SCOPE line will most likely say for this question, without any Bedrock call. */

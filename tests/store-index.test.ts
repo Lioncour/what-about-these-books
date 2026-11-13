@@ -5,7 +5,7 @@ import { freshDataDir, removeDataDir, writeLibrary } from "./store-env";
 const docs = new Map<string, { text: string; metadata: Record<string, unknown> }>();
 let instances = 0;
 
-vi.mock("vectra", () => ({
+vi.mock("vectra/lib/LocalDocumentIndex", () => ({
   LocalDocumentIndex: class {
     constructor() {
       instances++;

@@ -43,11 +43,25 @@ const NOT_A_NAME = new Set(
   ).split(" ")
 );
 
-export function deriveMainCharacters(bookIds: string[]): { name: string; mentions: number; books: number }[] {
+export interface MainCharacter {
+  name: string;
+  /** Other forms of the name the books use ("Joe", "Bishop" for "Joe Bishop"). */
+  aliases: string[];
+  mentions: number;
+  /** How many of the books in scope the character appears in. */
+  books: number;
+}
+
+/**
+ * The people who matter most in these books, from the entity graph: characters only
+ * (groups, ships and places are other node types), short forms counted into the full
+ * name they belong to.
+ */
+export function deriveMainCharacters(bookIds: string[]): MainCharacter[] {
   const graph = getEntityGraph();
   const inScope = new Set(bookIds);
   // The graph holds one node per name and book; a character is the sum of its nodes.
-  const byName = new Map<string, { name: string; mentions: number; books: Set<string> }>();
+  const byName = new Map<string, { name: string; mentions: number; books: Set<string>; aliases: string[] }>();
   // "Bishop" in one book is "Joe Bishop" in another: a short form counts towards the
   // full name it is an alias of, when only one full name claims it.
   const fullNameOf = new Map<string, string | null>();
@@ -66,13 +80,18 @@ export function deriveMainCharacters(bookIds: string[]): { name: string; mention
     const displayName = fullNameOf.get(n.name.toLowerCase()) || n.name;
     const key = displayName.toLowerCase();
     if (NOT_A_NAME.has(key)) continue;
-    const row = byName.get(key) || { name: displayName, mentions: 0, books: new Set<string>() };
+    const row = byName.get(key) || { name: displayName, mentions: 0, books: new Set<string>(), aliases: [] };
     row.mentions += n.mentions;
     for (const b of books) row.books.add(b);
+    for (const alias of displayName === n.name ? n.aliases || [] : [n.name]) {
+      const known = row.aliases.some((a) => a.toLowerCase() === alias.toLowerCase());
+      if (!known && alias.toLowerCase() !== key && !NOT_A_NAME.has(alias.toLowerCase())) row.aliases.push(alias);
+    }
     byName.set(key, row);
   }
   const weighted = [...byName.values()].map((row) => ({
     name: row.name,
+    aliases: row.aliases,
     mentions: row.mentions,
     books: row.books.size,
     score: row.mentions * Math.max(row.books.size, 1),
@@ -82,7 +101,14 @@ export function deriveMainCharacters(bookIds: string[]): { name: string; mention
   const max = weighted[0].score;
   return weighted
     .filter((w, i) => i < 8 && (w.score >= max * 0.35 || i < 3))
-    .map((w) => ({ name: w.name, mentions: w.mentions, books: w.books }));
+    .map((w) => ({ name: w.name, aliases: w.aliases, mentions: w.mentions, books: w.books }));
+}
+
+/** "- **Joe Bishop** (Joe, Bishop): 6,479 mentions in 16 books" */
+export function formatMainCharacter(c: MainCharacter): string {
+  const aliases = c.aliases.length ? ` (${c.aliases.slice(0, 4).join(", ")})` : "";
+  const mentions = `${c.mentions.toLocaleString("en-US")} mention${c.mentions === 1 ? "" : "s"}`;
+  return `- **${c.name}**${aliases}: ${mentions} in ${c.books} book${c.books === 1 ? "" : "s"}`;
 }
 
 export function summarizeSpecialistDisagreement(specialists: SpecialistAnswer[]): string[] {
@@ -117,6 +143,21 @@ export function summarizeSpecialistDisagreement(specialists: SpecialistAnswer[])
   return notes;
 }
 
+/** What the entity graph says a name is, in words a prompt can use. */
+export function describeEntityKind(entity: { name: string; type: string; aliases: string[] }): string {
+  const also = entity.aliases.length ? ` Also written: ${entity.aliases.slice(0, 5).join(", ")}.` : "";
+  switch (entity.type) {
+    case "character":
+      return `${entity.name} is a person (a character).${also}`;
+    case "faction":
+      return `${entity.name} is a group (a species, people, organisation or ship), not a single person. Describe who they are as a group.${also}`;
+    case "place":
+      return `${entity.name} is a place, not a person. Say where and what it is.${also}`;
+    default:
+      return "";
+  }
+}
+
 export async function synthesizeWhoIsAnswer(params: {
   target: string;
   scopeLabel: string;
@@ -124,6 +165,10 @@ export async function synthesizeWhoIsAnswer(params: {
   conversationContext?: string;
   modelId?: string;
   signal?: AbortSignal;
+  /** The question as asked ("Who are the Kristang?"); default "Who is <target>?". */
+  question?: string;
+  /** What the entity graph knows the target to be. */
+  entity?: { name: string; type: string; aliases: string[] } | null;
 }): Promise<string> {
   if (!params.snippets.length) {
     return `I couldn't find enough evidence to identify **${params.target}** in ${params.scopeLabel}.`;
@@ -132,13 +177,14 @@ export async function synthesizeWhoIsAnswer(params: {
     .slice(0, 24)
     .map((s, i) => `[${i + 1}] ${s.book} ${s.label}: ${s.snippet}`)
     .join("\n");
+  const kind = params.entity ? describeEntityKind(params.entity) : "";
   const prompt = `You are a helpful librarian AI.
-User asks: "Who is ${params.target}?"
+User asks: "${params.question || `Who is ${params.target}?`}"
 Scope: ${params.scopeLabel}
-Recent conversation context:
+${kind ? `What the library's index of names says: ${kind}\n` : ""}Recent conversation context:
 ${params.conversationContext || "(none)"}
 
-Use ONLY the evidence below. Answer like a real person in 2-4 sentences:
+Use ONLY the evidence below. Answer like a real person in 2-4 sentences, in the language the user's question is written in:
 1) Start with a direct identification sentence.
 2) Add key role/context.
 3) If uncertain, say that clearly.

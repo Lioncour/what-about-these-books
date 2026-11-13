@@ -1,5 +1,5 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
-import type { EmbeddingsModel, EmbeddingsResponse } from "vectra";
+import type { EmbeddingsModel, EmbeddingsResponse } from "vectra/lib/types";
 import { isAbortError, sendBedrockCommand } from "@/lib/bedrock-client";
 import { recordTokenUsage } from "@/lib/token-usage-store";
 import { currentRequestSignal, recordRequestEmbedCall } from "@/lib/chat/request-context";

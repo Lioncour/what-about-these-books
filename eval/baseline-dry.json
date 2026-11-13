@@ -51,7 +51,7 @@
       "route": "open_rag",
       "scopeReason": "semantic",
       "books": 3,
-      "claudeCalls": 4,
+      "claudeCalls": 5,
       "inputTokens": 0,
       "outputTokens": 0
     },
@@ -78,7 +78,7 @@
       "route": "open_rag",
       "scopeReason": "semantic",
       "books": 3,
-      "claudeCalls": 4,
+      "claudeCalls": 5,
       "inputTokens": 0,
       "outputTokens": 0
     },
@@ -168,7 +168,7 @@
       "route": "open_rag",
       "scopeReason": "semantic",
       "books": 3,
-      "claudeCalls": 4,
+      "claudeCalls": 5,
       "inputTokens": 0,
       "outputTokens": 0
     },
@@ -214,6 +214,87 @@
       "scopeReason": "semantic",
       "books": 3,
       "claudeCalls": 4,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "fact-one-book": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "compare-two-named-books": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 2,
+      "claudeCalls": 3,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "who-is-secondary-character": {
+      "passed": true,
+      "route": "who_is",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "who-are-a-group": {
+      "passed": true,
+      "route": "who_is",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "books-dont-say": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "norwegian-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "follow-up-depends-on-previous-turn": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "router-count-paraphrase": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 3,
+      "inputTokens": 0,
+      "outputTokens": 0
+    },
+    "router-which-books-paraphrase": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 5,
       "inputTokens": 0,
       "outputTokens": 0
     }

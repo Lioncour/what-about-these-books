@@ -53,11 +53,15 @@ Nothing book-shaped lives in a random cloud database we run. Your library stays 
 Dev: `npm run dev` → Electron spawns `next dev`.  
 Prod: build standalone → Electron runs `resources/standalone/server.js`.
 
-**Packaging has three traps**, all found by launching the built app (`npm run smoke -- --packaged`), none visible from the project folder:
+**Packaging has five traps**, all found by launching the built app (`npm run smoke -- --packaged`), none visible from the project folder:
 
 1. Next copies the whole project, env files included, into `.next/standalone` when code reads from the project root. `scripts/prepare-standalone.mjs` keeps only what the server needs and fails the build on a leftover env file.
 2. electron-builder skips a top-level `node_modules` in `extraResources`; it is listed as its own entry in `package.json`.
 3. The Turbopack build forgets the route-handler runtime in the trace; the prepare script copies it. Inside the repo Node finds it in the project's `node_modules`, so the smoke test runs the standalone build from a copy outside the repo.
+4. The unbundled packages (`vectra`, `epub2`) arrive as links into the build machine's `node_modules` with half-traced dependencies. `scripts/standalone-deps.mjs` walks their imports and the prepare script ships real copies of exactly the files that are reachable; `npm run trace:server` records what a running server loads, to check the walk.
+5. electron-builder packs the project's production `node_modules` into `app.asar` by default. The Electron shell needs none of it, so `build.files` excludes it; that alone was half the installer.
+
+The smoke test (`npm run smoke`) is what keeps these honest: it runs the build from a copy outside the repo, exercises pages, API routes, an exact count and an upload, and fails on any "Cannot find module".
 
 A port is "free" only if nothing answers on it (binding 127.0.0.1 can succeed next to a server on all interfaces), and the window opens only after `/api/config` answers as our server.
 
@@ -130,6 +134,14 @@ Encoding lives in `src/lib/chat/stream-protocol.ts`.
 ### Scope by named book
 
 Before anything is embedded, `findNamedBooksInQuestion` (`specialist-limits.ts`) looks for catalog titles (or "book 3" of a series named in the question). Named books are read first and, when exactly one is named, alone; exact mention counts scope the same way. This is what keeps "In Columbus Day, …" from being answered by books 2–7.
+
+### When no rule is sure
+
+`router.ts` decides with rules first. A question that falls through to the librarians but looks like one of the exact tools goes through `steps/route-fallback.ts`: one small call to the librarian model that may pick a tool route (strict one-line JSON, 4 s limit, the target must appear in the question). Anything else stays `open_rag`.
+
+### Checking the rest
+
+An answer drawn from part of the library carries an action ("Check the other N books", `components/chat/followUp.ts`). It re-sends the same question with `bookIds` set to the books not read yet; the picked scope reads the six closest of them and SCOPE says which. Messages keep `label`, `asked` and `checked` so a saved chat shows what was asked of what.
 
 ### Choosing the scope before sending
 

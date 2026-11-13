@@ -3,15 +3,22 @@
 //
 //   node scripts/electron-smoke.mjs              dev server (next dev), empty temp library
 //   node scripts/electron-smoke.mjs --prod       the standalone build (run `npm run build` first)
-//   node scripts/electron-smoke.mjs --packaged   the packaged app in dist/win-unpacked (run `npm run dist` first)
+//   node scripts/electron-smoke.mjs --packaged   the packaged app in dist/win-unpacked or dist/linux-unpacked
+//                                                (run `npm run dist` / `electron-builder --linux` first)
 //   node scripts/electron-smoke.mjs --busy-port  occupy port 3000 first: the app must move
 //   node scripts/electron-smoke.mjs --real-data  use your own library instead of a temp one
+//
+// Every run is cut off from AWS (an empty config and a profile that isn't in it), so it
+// costs nothing and never opens a login page. The upload check therefore ends at the
+// embedding step; what it proves is that everything up to there could be loaded. A
+// "Cannot find module" anywhere, in a response or in the app's output, fails the run:
+// that is how a build that ships too little shows itself.
 //
 // Exit code 0 when every check passed. In CI run it under xvfb (see ci.yml).
 
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -68,6 +75,19 @@ function isListening(port) {
   });
 }
 
+const MISSING_MODULE = /Cannot find (module|package)|MODULE_NOT_FOUND/;
+const lastLine = (text) => (text.trim().split(/\r?\n/).pop() || "").slice(0, 120);
+
+/** POST to the app; resolves with the status and the whole (streamed) body, never throws. */
+async function post(path, init) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${appPort}${path}`, { method: "POST", ...init, signal: AbortSignal.timeout(180_000) });
+    return { status: res.status, text: await res.text() };
+  } catch (error) {
+    return { status: 0, text: String(error?.message || error) };
+  }
+}
+
 let blocker = null;
 if (flag("--busy-port")) {
   // Listen the way `next dev` does by default (all interfaces), which is the case that
@@ -95,16 +115,35 @@ if (flag("--prod")) {
   standaloneCopy = mkdtempSync(join(tmpdir(), "wabt-standalone-"));
   cpSync(built, standaloneCopy, { recursive: true });
 }
+// No AWS: the CLI and the SDK both fail at once on a profile that is in no config file,
+// without a browser login and without reading the real ~/.aws. (electron/main.js leaves
+// the user's own settings file out when WABT_SMOKE is set.)
+const awsDir = mkdtempSync(join(tmpdir(), "wabt-smoke-aws-"));
+const emptyAws = join(awsDir, "config");
+writeFileSync(emptyAws, "");
+const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^AWS_/i.test(key)));
 const env = {
-  ...process.env,
+  ...inherited,
+  AWS_CONFIG_FILE: emptyAws,
+  AWS_SHARED_CREDENTIALS_FILE: emptyAws,
+  AWS_PROFILE: "wabt-smoke-no-aws",
+  AWS_EC2_METADATA_DISABLED: "true",
   WABT_SMOKE: "1",
   ...(dataDir ? { DATA_DIR: dataDir } : {}),
   ...(standaloneCopy ? { NODE_ENV: "production", WABT_STANDALONE_DIR: standaloneCopy } : {}),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
-// --packaged runs the built app from dist/win-unpacked (after `npm run dist`).
-const packagedExe = join(root, "dist", "win-unpacked", "What About This Book.exe");
+// --packaged runs the built app from dist/<platform>-unpacked (after `npm run dist`, or
+// `electron-builder --linux`). The Linux name is `linux.executableName` in package.json.
+const packagedExe =
+  process.platform === "win32"
+    ? join(root, "dist", "win-unpacked", "What About This Book.exe")
+    : join(root, "dist", "linux-unpacked", JSON.parse(readFileSync(join(root, "package.json"), "utf8")).build?.linux?.executableName || "whataboutthisbook");
+if (flag("--packaged") && !existsSync(packagedExe)) {
+  console.error(`No packaged app at ${packagedExe}. Build it first.`);
+  process.exit(1);
+}
 const launchPath = flag("--packaged") ? packagedExe : electronPath;
 const electronArgs = [...(flag("--packaged") ? [] : ["."]), `--remote-debugging-port=${DEBUG_PORT}`];
 if (process.env.CI) electronArgs.push("--no-sandbox", "--disable-gpu");
@@ -176,6 +215,34 @@ try {
   });
   check("the chat scope preview answers", scope === 200, `status ${scope}`);
 
+  // An exact-count question: the whole chat route, answered from the text files with no
+  // AI call (and an empty library has nothing to count).
+  const count = await post("/api/chat", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookId: "all", bookTitle: "All books", messages: [{ role: "user", content: "How many times is the mentioned?" }] }),
+  });
+  check(
+    "an exact-count chat question answers",
+    count.status === 200 && /^USAGE:/m.test(count.text) && !MISSING_MODULE.test(count.text),
+    `status ${count.status}, ${lastLine(count.text)}`
+  );
+
+  // A tiny TXT upload: parsing, chunking and the index code all load; the embedding call
+  // is where it stops without AWS. Never against a real library.
+  if (dataDir) {
+    const form = new FormData();
+    const words = Array.from({ length: 40 }, (_, i) => `The lighthouse keeper counted the ships again on day ${i + 1}.`).join(" ");
+    form.append("file", new Blob([words], { type: "text/plain" }), "wabt-smoke-notes.txt");
+    const upload = await post("/api/extract", { body: form });
+    const reachedEmbedding = /^PROGRESS:.*embeddings/m.test(upload.text);
+    const finished = /^DONE:/m.test(upload.text) || /^ERROR:.*(embedding|AWS|credential|SSO)/im.test(upload.text);
+    check(
+      "a TXT upload gets as far as the embedding step",
+      upload.status === 200 && reachedEmbedding && finished && !MISSING_MODULE.test(upload.text),
+      `status ${upload.status}, ${lastLine(upload.text)}`
+    );
+  }
+
   const cross = await new Promise((resolve) => {
     const req = http.request(
       { host: "127.0.0.1", port: appPort, path: "/api/settings", method: "POST", headers: { Origin: "http://evil.example", "Content-Type": "application/json" } },
@@ -213,7 +280,7 @@ try {
     }
   }
   blocker?.close();
-  for (const dir of [dataDir, standaloneCopy]) {
+  for (const dir of [dataDir, standaloneCopy, awsDir]) {
     if (!dir) continue;
     try {
       rmSync(dir, { recursive: true, force: true });
@@ -223,10 +290,16 @@ try {
   }
 }
 
+// A module the build forgot shows up in the app's output even when the request that
+// needed it was not one of ours.
+const appOutput = output.join("");
+const missing = [...new Set(appOutput.split(/\r?\n/).filter((line) => MISSING_MODULE.test(line)).map((line) => line.trim().slice(0, 160)))];
+check("the app never failed to find a module", missing.length === 0, missing.length ? missing.slice(0, 3).join(" | ") : "output scanned");
+
 const failed = checks.filter((c) => !c.ok);
 if (failed.length) {
   console.log("\n--- app output (last lines) ---");
-  console.log(output.join("").split(/\r?\n/).slice(-40).join("\n"));
+  console.log(appOutput.split(/\r?\n/).slice(-40).join("\n"));
 }
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length ? 1 : 0);

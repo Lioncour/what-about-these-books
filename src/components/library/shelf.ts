@@ -113,7 +113,7 @@ export function bookEditPatch(
   return patch.title === undefined && patch.author === undefined ? null : patch;
 }
 
-export const COVER_MAX_BYTES = 5 * 1024 * 1024;
+const COVER_MAX_BYTES = 5 * 1024 * 1024;
 const COVER_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 /** Why a file can't be a cover ("" when it can): png/jpeg/webp, 5 MB at most. */

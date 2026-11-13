@@ -90,7 +90,8 @@ if (!chat || flag("--json")) {
         : `${o.scopeBooks.slice(0, 3).join(", ")}${o.scopeBooks.length + o.scopeMore > 3 ? ` +${o.scopeBooks.length + o.scopeMore - 3}` : ""}`;
     const cost = live ? `${o.claudeCalls} calls, ${k(o.inputTokens)} in, ${k(o.outputTokens)} out` : `${o.claudeCalls} planned calls`;
     console.log(`${r.passed ? "PASS" : "FAIL"}  ${r.id}`);
-    console.log(`      ${o.route ?? "?"} · ${o.scopeReason ?? "?"}: ${scope} · ${cost} · ${(o.ms / 1000).toFixed(1)} s`);
+    const router = o.routerAsked ? (live ? " (router model asked)" : " (router model planned)") : "";
+    console.log(`      ${o.route ?? "?"}${router} · ${o.scopeReason ?? "?"}: ${scope} · ${cost} · ${(o.ms / 1000).toFixed(1)} s`);
     for (const f of r.failures) console.log(`      ✗ ${f}`);
     for (const s of r.skipped) console.log(`      – skipped ${s}`);
   }

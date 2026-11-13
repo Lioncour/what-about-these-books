@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import BookLibrary from "@/components/BookLibrary";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -13,8 +13,9 @@ import type { Source } from "@/components/chat/MessageExtras";
 import MessageList from "@/components/chat/MessageList";
 import PassageReader, { type PassageReaderTarget } from "@/components/chat/PassageReader";
 import PastNotes from "@/components/chat/PastNotes";
-import ScopeChip from "@/components/chat/ScopeChip";
+import ScopeChip, { type ScopeChipHandle } from "@/components/chat/ScopeChip";
 import WelcomePanel from "@/components/chat/WelcomePanel";
+import { followUpScope, type FollowUpAction } from "@/components/chat/followUp";
 import { useAskScope } from "@/hooks/useAskScope";
 import { useChatHistory } from "@/hooks/useChatHistory";
 import { useChatStream } from "@/hooks/useChatStream";
@@ -30,6 +31,7 @@ export default function Home() {
   const [pastNotesOpen, setPastNotesOpen] = useState(false);
   const [passageTarget, setPassageTarget] = useState<PassageReaderTarget | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
+  const scopeChipRef = useRef<ScopeChipHandle>(null);
 
   const rail = useLibraryRail();
   const {
@@ -89,6 +91,21 @@ export default function Home() {
     },
     [send]
   );
+
+  // "Check the other books" under an answer: the same question again, asked once against
+  // the books the action names. The composer's scope chip stays as it is.
+  const askAgain = useCallback(
+    (answerIndex: number, question: string, action: FollowUpAction) => {
+      send(question, {
+        scope: followUpScope(action),
+        label: action.label,
+        checkedIndex: answerIndex,
+      });
+    },
+    [send]
+  );
+  const followUpLibrary = useMemo(() => ({ books, series }), [books, series]);
+  const openScopePicker = useCallback(() => scopeChipRef.current?.open(), []);
 
   const { startNew } = history;
   const startNewChat = useCallback(() => {
@@ -199,7 +216,10 @@ export default function Home() {
             thinkingSteps={chat.thinkingSteps}
             hasAssistantTokens={chat.hasAssistantTokens}
             pendingScope={chat.pendingScope}
+            library={followUpLibrary}
+            pickedIds={pickedIds}
             onOpenPassage={openPassage}
+            onFollowUp={askAgain}
             welcome={
               <WelcomePanel
                 companionMode={companionMode}
@@ -220,9 +240,11 @@ export default function Home() {
             onStop={chat.stop}
             isLoading={chat.isLoading}
             placeholder={focus ? `Ask about ${focus.title}…` : "Write a note or question…"}
+            onOpenScope={bookCount > 0 ? openScopePicker : undefined}
             above={
               bookCount > 0 ? (
                 <ScopeChip
+                  ref={scopeChipRef}
                   preview={scopePreview}
                   books={books}
                   series={series}
@@ -231,6 +253,7 @@ export default function Home() {
                     askScope.applyTicked(ids);
                     focusComposer();
                   }}
+                  onDismiss={focusComposer}
                 />
               ) : null
             }

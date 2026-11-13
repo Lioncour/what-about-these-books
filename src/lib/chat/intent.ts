@@ -476,9 +476,11 @@ export function looksLikeMainCharacterQuestion(input: string): boolean {
 
 /** "Who is Joe?" → "Joe"; stops at " in ", " with", "?"; 1–3 capitalised words only. */
 export function extractWhoIsTarget(input: string): string | null {
-  const m = input.match(/\bwho is\s+["“”']?([^"“”'?\n]+?)["“”']?(?:\?|$)/i);
-  if (!m?.[1]) return null;
-  let value = m[1].trim();
+  const m = input.match(/\bwho (is|are|was|were)\s+["“”']?([^"“”'?\n]+?)["“”']?(?:\?|$)/i);
+  if (!m?.[2]) return null;
+  const plural = /^(?:are|were)$/i.test(m[1]);
+  // "Who are the Kristang?", "Who is the Mysterious Benefactor?": the name follows the article.
+  let value = m[2].trim().replace(/^the\s+(?=[A-Z])/, "");
   const parts = value.split(/\s+(in|with|from|on|at|to|for|and|during|after|before)\s+/i);
   value = parts[0].trim();
   // Only a place may follow the name ("Who is Skippy in Columbus Day?"). Anything else
@@ -492,7 +494,9 @@ export function extractWhoIsTarget(input: string): string | null {
   // A capitalised name of 1-3 words, or a single lower-case word that isn't a
   // function word ("who is skippy?"); "who is the author" is not a lookup.
   const capitalised = /^[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,2}$/.test(value);
+  // "Who are they?", "who were the others": in the plural only a capitalised name is a lookup.
   const single =
+    !plural &&
     /^[a-z][\w'’-]{2,}$/.test(value) &&
     !/^(the|this|that|your|their|his|her|its|our|he|she|it|they|you|who|what|which|there|here|everyone|someone|anyone|nobody)$/.test(
       value
@@ -560,6 +564,23 @@ export function buildRecentConversation(messages: ChatMessage[], maxTurns = 6): 
       return `${m.role.toUpperCase()}: ${body}${sources}`;
     })
     .join("\n");
+}
+
+const FOLLOW_UP_PRONOUN_RE = /\b(?:he|she|him|her|his|hers|they|them|their|theirs|it|its)\b/i;
+
+/**
+ * The question as the librarians should read it. "What does he call Joe?" means nothing
+ * to someone who didn't hear "Who is Skippy?" before it, and the librarians see one
+ * question at a time: a question with a pronoun carries the reader's previous question
+ * along. `earlier` are the turns before this question.
+ */
+export function questionWithFollowUpContext(question: string, earlier: ChatMessage[]): string {
+  if (!FOLLOW_UP_PRONOUN_RE.test(question)) return question;
+  const previous = [...earlier].reverse().find((m) => m.role === "user" && m.content.trim());
+  if (!previous) return question;
+  const text = normalizeUserQuestion(previous.content).replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text || text.toLowerCase() === question.trim().toLowerCase()) return question;
+  return `${question}\n(A follow-up: the reader's previous question was "${text}".)`;
 }
 
 /** Hint so open-ended answers stay aware of series order / continuity. */

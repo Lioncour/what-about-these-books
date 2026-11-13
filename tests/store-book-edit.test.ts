@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshDataDir, removeDataDir, writeLibrary } from "./store-env";
 
 // Editing a book never touches the vector index; make sure a stray import can't reach Bedrock.
-vi.mock("vectra", () => ({ LocalDocumentIndex: class {} }));
+vi.mock("vectra/lib/LocalDocumentIndex", () => ({ LocalDocumentIndex: class {} }));
 vi.mock("@/lib/bedrock-embeddings", () => ({ BedrockEmbeddings: class {} }));
 
 let dir: string;

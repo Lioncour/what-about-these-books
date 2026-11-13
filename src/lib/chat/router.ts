@@ -221,3 +221,159 @@ export function describeRoute(route: ChatRoute): string {
       return "Figuring out the best way to answer…";
   }
 }
+
+/* ───────────── model fallback: when no rule claims an ambiguous question ───────────── */
+
+/** The tool routes the router model may pick; anything else keeps `open_rag`. */
+export const MODEL_ROUTES = [
+  "mention_count",
+  "books_mentioning",
+  "quote_lookup",
+  "passage_find",
+  "who_is",
+  "main_characters",
+  "open_rag",
+] as const;
+export type ModelRoute = (typeof MODEL_ROUTES)[number];
+
+/** Routes that are nothing without a target taken from the question. */
+const TARGET_ROUTES = new Set<ModelRoute>(["mention_count", "books_mentioning", "quote_lookup", "who_is"]);
+
+export const ROUTER_MAX_TOKENS = 60;
+export const ROUTER_TIMEOUT_MS = 4000;
+/** "Asking something short": at most this many words. */
+const SHORT_QUESTION_WORDS = 4;
+
+const COUNT_WORD_RE =
+  /\b(?:how (?:many|often|much|frequently)|number of|count(?:s|ed|ing)?|tally|total|times|frequency|frequent(?:ly)?|occurrences?)\b/i;
+const QUOTE_MARK_RE = /["“”«»]|(?:^|\s)['‘][^'’]{3,}['’](?=$|[\s?.!,])/;
+const WHICH_BOOK_RE = /\b(?:which|what) (?:book|books|novel|novels|volume|volumes)\b/i;
+const WHERE_RE = /\bwhere\b/i;
+const LIST_RE = /\blist\b/i;
+
+/**
+ * Why an `open_rag` question might still be a job for a tool, or null when it isn't
+ * ambiguous: it has a count word, a quote mark, "which book(s)", "where" or "list", or
+ * it is short and names something from the entity graph. Cheap, no I/O beyond the
+ * `isKnownName` callback, which is only asked for short questions.
+ */
+export function routerFallbackReason(question: string, isKnownName?: (name: string) => boolean): string | null {
+  const q = normalizeUserQuestion(question);
+  if (!q.trim()) return null;
+  if (COUNT_WORD_RE.test(q)) return "count word";
+  if (QUOTE_MARK_RE.test(q)) return "quote mark";
+  if (WHICH_BOOK_RE.test(q)) return "which book";
+  if (WHERE_RE.test(q)) return "where";
+  if (LIST_RE.test(q)) return "list";
+  const words = q.trim().split(/\s+/);
+  if (isKnownName && words.length <= SHORT_QUESTION_WORDS) {
+    const names = q.match(/\b[A-Z][\w’'-]+(?:\s+[A-Z][\w’'-]+){0,2}/g) || [];
+    for (const name of names) {
+      const forms = [name, ...name.split(/\s+/)].map((n) => n.replace(/[’']s$/i, ""));
+      if (forms.some((n) => n.length > 2 && isKnownName(n))) return "short question about a known name";
+    }
+  }
+  return null;
+}
+
+export function buildRouterPrompt(question: string): string {
+  return `You route one question about a reader's own book library to the tool that answers it best.
+Reply with ONE line of JSON and nothing else: {"route": "<route>", "target": "<target or empty>"}
+
+Routes:
+- "mention_count": the reader wants a NUMBER of times a name or word occurs in the text. target = that name or word.
+- "books_mentioning": the reader wants to know WHICH BOOKS contain a name or word. target = that name or word.
+- "quote_lookup": the reader wants to know where an exact quoted line is from, or who said it. target = the quoted line, without the quote marks.
+- "passage_find": the reader wants to be shown one specific passage, scene or recipe.
+- "who_is": the reader only wants to know who or what a named character, group or place is. target = the name.
+- "main_characters": the reader wants the main characters of the books.
+- "open_rag": anything that needs reading and explaining: plot, motives, opinions, comparisons, "why", "how", what a quote means, how often something happens (as opposed to how often a word occurs). When in doubt, choose this.
+
+The target must be copied from the question exactly as written there.
+
+Question: ${JSON.stringify(question)}`;
+}
+
+/**
+ * Strict: one JSON object with a known route; a target, where the route needs one, that
+ * really stands in the question. Anything else is null and the question stays `open_rag`.
+ */
+export function parseRouterAnswer(raw: string, question: string): { route: ModelRoute; target: string | null } | null {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  if (!text.startsWith("{") || !text.endsWith("}") || text.includes("\n")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const { route, target } = parsed as { route?: unknown; target?: unknown };
+  if (typeof route !== "string" || !(MODEL_ROUTES as readonly string[]).includes(route)) return null;
+  if (target !== undefined && target !== null && typeof target !== "string") return null;
+  const kind = route as ModelRoute;
+  const squash = (s: string) => s.toLowerCase().replace(/[“”«»"]/g, "").replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim();
+  const clean = typeof target === "string" ? target.replace(/^["“”'‘’]+|["“”'‘’]+$/g, "").trim() : "";
+  if (!TARGET_ROUTES.has(kind)) return { route: kind, target: null };
+  if (clean.length < 2 || clean.length > 200 || !squash(question).includes(squash(clean))) return null;
+  return { route: kind, target: clean };
+}
+
+/** The route a valid router answer stands for. */
+export function routeFromModel(answer: { route: ModelRoute; target: string | null }): ChatRoute {
+  return {
+    kind: answer.route,
+    target: answer.target,
+    reason: answer.route === "open_rag" ? "Router model: open question" : `Router model picked ${answer.route}`,
+    usesTool: answer.route !== "open_rag",
+  };
+}
+
+export interface RouterFallbackResult {
+  route: ChatRoute;
+  /** The model was asked (or, in a dry run, would have been). */
+  asked: boolean;
+  /** Why it was (not) asked, or what came of it: for the log. */
+  outcome: string;
+}
+
+/**
+ * Ask the cheap librarian model to pick a route for a question no rule claimed. Only
+ * for `open_rag` questions that `routerFallbackReason` finds ambiguous; one short call
+ * (60 output tokens, 4 s). A timeout, an error or an answer that doesn't parse keeps
+ * `open_rag`; only the reader's own Stop is passed on. In a dry run the call is counted
+ * and not made, so the route stays `open_rag`.
+ */
+export async function resolveRouteWithModel(opts: {
+  route: ChatRoute;
+  question: string;
+  isKnownName?: (name: string) => boolean;
+  /** One model call: resolves to the raw answer. Gets a signal that also fires on timeout. */
+  ask: (prompt: string, signal: AbortSignal) => Promise<string>;
+  signal?: AbortSignal;
+  dryRun?: boolean;
+  timeoutMs?: number;
+}): Promise<RouterFallbackResult> {
+  const { route } = opts;
+  if (route.kind !== "open_rag") return { route, asked: false, outcome: "rule_routed" };
+  const why = routerFallbackReason(opts.question, opts.isKnownName);
+  if (!why) return { route, asked: false, outcome: "not_ambiguous" };
+
+  opts.signal?.throwIfAborted();
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? ROUTER_TIMEOUT_MS);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+  let raw: string;
+  try {
+    raw = await opts.ask(buildRouterPrompt(opts.question), signal);
+  } catch (error) {
+    // The reader pressed Stop: that ends the request. Everything else keeps open_rag.
+    if (opts.signal?.aborted) throw error;
+    const outcome = timeout.aborted ? "timeout" : "error";
+    return { route, asked: true, outcome: `${why}: ${outcome}` };
+  }
+  if (opts.dryRun) return { route, asked: true, outcome: `${why}: planned (dry run)` };
+  const answer = parseRouterAnswer(raw, opts.question);
+  if (!answer) return { route, asked: true, outcome: `${why}: invalid answer` };
+  if (answer.route === "open_rag") return { route, asked: true, outcome: `${why}: open_rag` };
+  return { route: routeFromModel(answer), asked: true, outcome: `${why}: ${answer.route}` };
+}

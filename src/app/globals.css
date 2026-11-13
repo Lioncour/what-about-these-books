@@ -272,3 +272,33 @@ body {
 .prose-ai tr:nth-child(even) {
   background: rgba(42, 36, 30, 0.04);
 }
+
+/*
+ * A line of short pieces separated by middle dots that wraps piece by piece:
+ * <div class="dot-row"><div><span>…</span><span>…</span></div></div>.
+ * Every piece carries its dot on its left; the inner row is pulled left by that
+ * width and the outer box clips it, so the first piece of every line (also after
+ * a wrap) shows no separator.
+ */
+.dot-row {
+  overflow: hidden;
+}
+.dot-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 0.15rem;
+  margin-left: -1.1em;
+}
+.dot-row > div > * {
+  position: relative;
+  min-width: 0;
+  padding-left: 1.1em;
+}
+.dot-row > div > *::before {
+  content: "·";
+  position: absolute;
+  left: 0.4em;
+  color: var(--muted);
+  opacity: 0.7;
+}

@@ -15,6 +15,7 @@ const json = (type: string, value: unknown) => line(type, JSON.stringify(value))
 
 const base: ChatEvalObserved = {
   route: "mention_count",
+  routerAsked: false,
   scopeReason: "named",
   scopeBooks: ["Columbus Day"],
   scopeMore: 0,
@@ -162,6 +163,66 @@ describe("checkChatCase", () => {
       'sources: none matches "Paradise"',
       "sources: expected at least 3, got 1",
     ]);
+  });
+
+  it("textIncludesAny: one spelling of each fact is enough", () => {
+    const observed = { ...base, text: "Gunnery Sergeant Margaret Adams, later Joe's wife." };
+    expect(checkChatCase({ textIncludesAny: [["Adams", "Margaret"], ["gunny", "gunnery sergeant"]] }, observed).failures).toEqual([]);
+    expect(checkChatCase({ textIncludesAny: [["Adams"], ["Shauna", "Jarrett"]] }, observed).failures).toEqual([
+      'text: missing any of "Shauna" / "Jarrett"',
+    ]);
+    // Counted as a text check: skipped, and said so, when the answer is a dry-run placeholder.
+    const dry = checkChatCase({ textIncludesAny: [["Adams"]], textIncludes: ["Joe"] }, { ...base, text: DRY_RUN_TEXT, textIsReal: false });
+    expect(dry.failures).toEqual([]);
+    expect(dry.skipped).toEqual(["2 text checks (generated answer; run live)"]);
+  });
+
+  it("checks whether the router model was consulted", () => {
+    expect(checkChatCase({ routerAsked: true }, base).failures).toEqual(["router model: expected to be asked"]);
+    expect(checkChatCase({ routerAsked: false }, { ...base, routerAsked: true }).failures).toEqual([
+      "router model: expected not to be asked",
+    ]);
+    expect(checkChatCase({ routerAsked: true }, { ...base, routerAsked: true }).failures).toEqual([]);
+  });
+
+  it("a route the router model picks waits for a live run, with what follows from it", () => {
+    const expectation = {
+      routerAsked: true,
+      route: "mention_count",
+      scopeReason: "named",
+      scopeBooks: ["Columbus Day"],
+      maxClaudeCalls: 1,
+      textIncludes: ["766"],
+      minSources: 1,
+    };
+    // Dry: the call was planned, the route is still open_rag, the librarians were planned.
+    const dry = checkChatCase(expectation, {
+      ...base,
+      route: "open_rag",
+      routerAsked: true,
+      scopeReason: "semantic",
+      scopeBooks: ["Paradise", "SpecOps", "Zero Hour"],
+      claudeCalls: 5,
+      text: DRY_RUN_TEXT,
+      textIsReal: false,
+      sources: [],
+    });
+    expect(dry.failures).toEqual([]);
+    expect(dry.skipped).toEqual([
+      "route mention_count (the router model decides; run live)",
+      "scope, Claude calls, sources (follow from the route; run live)",
+      "1 text check (generated answer; run live)",
+    ]);
+    // Live: everything applies.
+    expect(checkChatCase(expectation, { ...base, routerAsked: true, claudeCalls: 1 }).failures).toEqual([]);
+    expect(checkChatCase(expectation, { ...base, route: "open_rag", routerAsked: true, claudeCalls: 5 }).failures).toEqual([
+      "route: expected mention_count, got open_rag",
+      "Claude calls: expected at most 1, got 5",
+    ]);
+    // A dry run that never planned the router call is a failure, not a skip.
+    expect(
+      checkChatCase(expectation, { ...base, route: "open_rag", text: DRY_RUN_TEXT, textIsReal: false }).failures
+    ).toContain("route: expected mention_count, got open_rag");
   });
 
   it("a truncated scope list is not an exact match", () => {

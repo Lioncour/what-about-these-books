@@ -45,6 +45,17 @@ export interface ChatEvalExpectation {
   /** Substrings of the answer, case-insensitive. Checked only when the answer is real. */
   textIncludes?: string[];
   textExcludes?: string[];
+  /**
+   * Facts with several valid spellings: of each inner list at least one must appear
+   * (`[["Adams", "Margaret"], ["sergeant", "gunny"]]`). Same rules as `textIncludes`.
+   */
+  textIncludesAny?: string[][];
+  /**
+   * Whether the router model is consulted (a question no rule claims but that looks like
+   * a job for a tool). In a dry run the call is planned, not made, so the route stays
+   * `open_rag` and the `route` check waits for a live run.
+   */
+  routerAsked?: boolean;
   /** Substrings of "Book · position" of some source. */
   sourcesInclude?: string[];
   minSources?: number;
@@ -52,6 +63,8 @@ export interface ChatEvalExpectation {
 
 export interface ChatEvalObserved {
   route: string | null;
+  /** The router model was asked for the route (live) or would have been (dry). */
+  routerAsked: boolean;
   scopeReason: string | null;
   scopeBooks: string[];
   scopeMore: number;
@@ -103,17 +116,36 @@ export function checkChatCase(
 
   if (observed.error) failures.push(`error: ${observed.error}`);
 
+  // A dry run plans the router model's call without making it: the route it would pick
+  // (and everything that follows from it) is only known live.
+  const routePending = observed.routerAsked && !observed.textIsReal && observed.route === "open_rag";
+  if (expect.routerAsked !== undefined && observed.routerAsked !== expect.routerAsked) {
+    failures.push(`router model: expected ${expect.routerAsked ? "to be asked" : "not to be asked"}`);
+  }
   if (expect.route && observed.route !== expect.route) {
-    failures.push(`route: expected ${expect.route}, got ${observed.route ?? "none"}`);
+    if (routePending && expect.routerAsked) skipped.push(`route ${expect.route} (the router model decides; run live)`);
+    else failures.push(`route: expected ${expect.route}, got ${observed.route ?? "none"}`);
   }
   for (const not of expect.routeNot || []) {
     if (observed.route === not) failures.push(`route: must not be ${not}`);
   }
+  // What depends on the route the model picks waits for a live run too.
+  const pending = routePending && expect.routerAsked === true && !!expect.route && expect.route !== "open_rag";
 
-  if (expect.scopeReason && observed.scopeReason !== expect.scopeReason) {
+  if (pending) {
+    const waiting = [
+      expect.scopeReason || expect.scopeBooks || expect.scopeIncludes || expect.scopeExcludes ? "scope" : "",
+      expect.minClaudeCalls !== undefined || expect.maxClaudeCalls !== undefined ? "Claude calls" : "",
+      expect.sourcesInclude || expect.minSources !== undefined ? "sources" : "",
+    ].filter(Boolean);
+    if (waiting.length) skipped.push(`${waiting.join(", ")} (follow from the route; run live)`);
+  }
+  const followsRoute = !pending;
+
+  if (followsRoute && expect.scopeReason && observed.scopeReason !== expect.scopeReason) {
     failures.push(`scope reason: expected ${expect.scopeReason}, got ${observed.scopeReason ?? "none"}`);
   }
-  if (expect.scopeBooks) {
+  if (followsRoute && expect.scopeBooks) {
     const want = expect.scopeBooks;
     const got = observed.scopeBooks;
     const same =
@@ -125,23 +157,24 @@ export function checkChatCase(
       failures.push(`scope: expected [${want.join(", ")}], got [${got.join(", ")}]${more}`);
     }
   }
-  for (const title of expect.scopeIncludes || []) {
+  for (const title of followsRoute ? expect.scopeIncludes || [] : []) {
     if (!observed.scopeBooks.some((g) => sameTitle(g, title))) failures.push(`scope: missing ${title}`);
   }
-  for (const title of expect.scopeExcludes || []) {
+  for (const title of followsRoute ? expect.scopeExcludes || [] : []) {
     if (observed.scopeBooks.some((g) => sameTitle(g, title))) failures.push(`scope: should not read ${title}`);
   }
 
-  if (expect.minClaudeCalls !== undefined && observed.claudeCalls < expect.minClaudeCalls) {
+  if (followsRoute && expect.minClaudeCalls !== undefined && observed.claudeCalls < expect.minClaudeCalls) {
     failures.push(`Claude calls: expected at least ${expect.minClaudeCalls}, got ${observed.claudeCalls}`);
   }
-  if (expect.maxClaudeCalls !== undefined && observed.claudeCalls > expect.maxClaudeCalls) {
+  if (followsRoute && expect.maxClaudeCalls !== undefined && observed.claudeCalls > expect.maxClaudeCalls) {
     failures.push(`Claude calls: expected at most ${expect.maxClaudeCalls}, got ${observed.claudeCalls}`);
   }
 
-  const textChecks = (expect.textIncludes?.length || 0) + (expect.textExcludes?.length || 0);
+  const textChecks =
+    (expect.textIncludes?.length || 0) + (expect.textExcludes?.length || 0) + (expect.textIncludesAny?.length || 0);
   if (textChecks > 0) {
-    if (!observed.textIsReal) {
+    if (!observed.textIsReal || pending) {
       skipped.push(`${textChecks} text check${textChecks === 1 ? "" : "s"} (generated answer; run live)`);
     } else {
       const text = norm(observed.text);
@@ -151,15 +184,21 @@ export function checkChatCase(
       for (const needle of expect.textExcludes || []) {
         if (text.includes(norm(needle))) failures.push(`text: should not say "${needle}"`);
       }
+      for (const anyOf of expect.textIncludesAny || []) {
+        const options = Array.isArray(anyOf) ? anyOf : [String(anyOf)];
+        if (!options.some((needle) => text.includes(norm(needle)))) {
+          failures.push(`text: missing any of ${options.map((o) => `"${o}"`).join(" / ")}`);
+        }
+      }
     }
   }
 
-  for (const needle of expect.sourcesInclude || []) {
+  for (const needle of followsRoute ? expect.sourcesInclude || [] : []) {
     if (!observed.sources.some((s) => norm(s).includes(norm(needle)))) {
       failures.push(`sources: none matches "${needle}"`);
     }
   }
-  if (expect.minSources !== undefined && observed.sources.length < expect.minSources) {
+  if (followsRoute && expect.minSources !== undefined && observed.sources.length < expect.minSources) {
     failures.push(`sources: expected at least ${expect.minSources}, got ${observed.sources.length}`);
   }
 
@@ -167,9 +206,10 @@ export function checkChatCase(
 }
 
 /** Turn the pipeline's stream lines into the facts the checks look at. Pure. */
-export function observeChat(lines: string[], route: string | null): ChatEvalObserved {
+export function observeChat(lines: string[], route: string | null, routerAsked = false): ChatEvalObserved {
   const observed: ChatEvalObserved = {
     route,
+    routerAsked,
     scopeReason: null,
     scopeBooks: [],
     scopeMore: 0,
@@ -284,7 +324,7 @@ export async function runChatEval(opts: { live?: boolean; ids?: string[] } = {})
         { ...scope, messages: caseHistory(testCase), question: testCase.question },
         { dryRun: !opts.live }
       );
-      observed = observeChat(run.lines, run.route?.kind ?? null);
+      observed = observeChat(run.lines, run.route?.kind ?? null, run.routerAsked);
     } catch (error) {
       observed = { ...observeChat([], null), error: error instanceof Error ? error.message : String(error) };
     }

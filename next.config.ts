@@ -20,8 +20,17 @@ const nextConfig: NextConfig = {
       "./eval/**",
       "./*.md",
       "./*.tsbuildinfo",
+      // Build-time only. sharp serves next/image, which this app does not use (see
+      // `images` below); the prepare script removes these too if the trace keeps them.
+      "./node_modules/typescript/**",
+      "./node_modules/@types/**",
+      "./node_modules/sharp/**",
+      "./node_modules/@img/**",
     ],
   },
+  // Covers are local files served by our own API; nothing goes through the image
+  // optimiser, so the installer does not carry sharp. Keep this if next/image is ever used.
+  images: { unoptimized: true },
   serverExternalPackages: ["epub2", "vectra"],
   turbopack: {
     root: __dirname,

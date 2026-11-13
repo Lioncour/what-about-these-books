@@ -14,7 +14,7 @@ const COVER_COLORS = [
   "bg-[#789a90]/20 text-[#3c524c]",
 ];
 
-export function BookIcon({ title }: { title: string }) {
+function BookIcon({ title }: { title: string }) {
   const colorClass = COVER_COLORS[hashTitle(title) % COVER_COLORS.length];
   return (
     <div className={`flex h-full w-full items-center justify-center rounded-lg ${colorClass}`}>

@@ -20,6 +20,58 @@ jobs:
       - run: npm test
       - run: npm run build
       # Launches the desktop app on the standalone build, from a copy outside the repo so
-      # it can't borrow modules from node_modules: port pick, window, API, clean quit.
+      # it can't borrow modules from node_modules: port pick, window, API, a chat question,
+      # an upload as far as the embedding step, clean quit. No AWS is used.
       - name: Desktop smoke test
         run: xvfb-run -a node scripts/electron-smoke.mjs --prod
+
+  # The two jobs below build what people install, on pushes to master only, once the
+  # checks above are green. Each starts from a clean checkout and uploads its result as a
+  # workflow artifact (kept 14 days). Nothing is signed and nothing is published.
+  linux-appimage:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build the AppImage
+        run: npx electron-builder --linux AppImage --publish never
+      # The unpacked app the AppImage was made from (dist/linux-unpacked), under xvfb.
+      - name: Smoke test the packaged app
+        run: xvfb-run -a node scripts/electron-smoke.mjs --packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-installer:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build the installer
+        run: npx electron-builder --win --publish never
+      # The unpacked app the installer was made from (dist/win-unpacked).
+      - name: Smoke test the packaged app
+        run: node scripts/electron-smoke.mjs --packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 14

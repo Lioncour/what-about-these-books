@@ -6,6 +6,18 @@ export interface ComposerHandle {
   focus: () => void;
 }
 
+/** Alt+S, by physical key: with Alt held some layouts type another character for S. */
+export function isScopeShortcut(e: {
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  code?: string;
+  key: string;
+}): boolean {
+  if (!e.altKey || e.ctrlKey || e.metaKey) return false;
+  return e.code ? e.code === "KeyS" : e.key.toLowerCase() === "s";
+}
+
 /** The question field with its Send button, which is Stop while an answer is coming. */
 export default function Composer({
   ref,
@@ -16,6 +28,7 @@ export default function Composer({
   isLoading,
   placeholder,
   above,
+  onOpenScope,
 }: {
   ref?: Ref<ComposerHandle>;
   value: string;
@@ -26,6 +39,8 @@ export default function Composer({
   placeholder: string;
   /** Sits right above the field (the scope chip). */
   above?: ReactNode;
+  /** Alt+S in the field: open the scope picker. */
+  onOpenScope?: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -64,6 +79,9 @@ export default function Composer({
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               onSend();
+            } else if (isScopeShortcut(e) && onOpenScope) {
+              e.preventDefault();
+              onOpenScope();
             }
           }}
           placeholder={placeholder}

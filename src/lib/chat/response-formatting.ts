@@ -48,6 +48,8 @@ export function buildPersonalityInstructions(settings: {
     : ["Write plainly and directly. No conversational filler."];
   if (settings.language && settings.language !== "Auto") {
     lines.push(`You MUST respond entirely in ${settings.language}.`);
+  } else {
+    lines.push("Answer in the language the question is written in, whatever language the books are in.");
   }
   if (companion && settings.tone) {
     lines.push(TONE_MAP[settings.tone] || TONE_MAP.Casual);

@@ -230,7 +230,9 @@ function waitForServer(url, timeout = 180000) {
 
 function startNextServer() {
   const ROOT = getAppRoot();
-  const bootstrap = getBootstrapEnv();
+  // A smoke run brings its own environment (an empty library, no AWS): the user's
+  // settings file must not put a real AWS profile back, or be created by a test.
+  const bootstrap = process.env.WABT_SMOKE ? {} : getBootstrapEnv();
   const serverEnv = {
     ...process.env,
     ...bootstrap,

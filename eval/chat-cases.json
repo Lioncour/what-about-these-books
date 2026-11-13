@@ -71,7 +71,14 @@
     "id": "not-a-count",
     "question": "How often does Joe appear nervous?",
     "note": "\"appear <adjective>\" is a reading question, not an exact count of \"Joe\".",
-    "expect": { "routeNot": ["mention_count"], "minClaudeCalls": 1 }
+    "expect": {
+      "routeNot": ["mention_count"],
+      "routerAsked": true,
+      "minClaudeCalls": 2,
+      "textIncludes": ["Joe"],
+      "textIncludesAny": [["nervous", "anxious", "nervousness", "anxiety"]],
+      "textExcludes": ["exact text search"]
+    }
   },
   {
     "id": "named-book-question",
@@ -82,7 +89,8 @@
       "scopeBooks": ["Columbus Day"],
       "minClaudeCalls": 1,
       "maxClaudeCalls": 3,
-      "textIncludes": ["Ruhar"],
+      "textIncludes": ["Ruhar", "Skippy"],
+      "textIncludesAny": [["warehouse", "storage", "beer can", "cylinder", "junk", "base"]],
       "textExcludes": ["don't have the actual text"]
     }
   },
@@ -93,26 +101,48 @@
     "expect": {
       "routeNot": ["bypass_general"],
       "scopeIncludes": ["Paradise"],
-      "minClaudeCalls": 1
+      "minClaudeCalls": 1,
+      "textIncludesAny": [["Kristang", "Ruhar"]]
     }
   },
   {
     "id": "short-plot-question",
     "question": "Does Joe survive?",
     "note": "Short questions without a keyword used to skip the books entirely. The answer must not pretend the reader asked about the three books that were chosen for them.",
-    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1, "maxClaudeCalls": 7, "textExcludes": ["you're asking about", "you asked about"] }
+    "expect": {
+      "routeNot": ["bypass_general", "who_is", "mention_count"],
+      "routerAsked": true,
+      "minClaudeCalls": 2,
+      "maxClaudeCalls": 8,
+      "textIncludes": ["Joe"],
+      "textIncludesAny": [["survive", "alive", "lives", "makes it"]],
+      "textExcludes": ["you're asking about", "you asked about"]
+    }
   },
   {
     "id": "open-question-first-wave",
     "question": "What does Skippy think of humans?",
     "note": "An open question asks the three closest books first (4 calls), not six (7 calls).",
-    "expect": { "route": "open_rag", "scopeReason": "semantic", "minClaudeCalls": 2, "maxClaudeCalls": 7 }
+    "expect": {
+      "route": "open_rag",
+      "routerAsked": false,
+      "scopeReason": "semantic",
+      "minClaudeCalls": 2,
+      "maxClaudeCalls": 7,
+      "textIncludes": ["Skippy"],
+      "textIncludesAny": [["monkey", "monkeys"]]
+    }
   },
   {
     "id": "breadth-question-reads-wide",
     "question": "Compare how Skippy treats Joe across all the books",
     "note": "Asking for breadth keeps all six librarians in one round.",
-    "expect": { "route": "open_rag", "minClaudeCalls": 7 }
+    "expect": {
+      "route": "open_rag",
+      "minClaudeCalls": 7,
+      "textIncludes": ["Skippy", "Joe"],
+      "textIncludesAny": [["insult", "mock", "tease", "monkey", "condescend", "dumdum", "belittl"]]
+    }
   },
   {
     "id": "greeting",
@@ -133,13 +163,24 @@
   {
     "id": "who-is",
     "question": "Who is Skippy?",
-    "expect": { "route": "who_is", "minSources": 1 }
+    "expect": {
+      "route": "who_is",
+      "minSources": 1,
+      "maxClaudeCalls": 1,
+      "textIncludes": ["Skippy", "Joe"],
+      "textIncludesAny": [["AI entity", "AI's", "an AI", "the AI", "artificial intelligence"], ["Ruhar", "beer can", "Elder"]]
+    }
   },
   {
     "id": "who-is-with-tail",
     "question": "Who is Joe in love with?",
     "note": "A question about a person is read from the books, not answered as a \"who is Joe\" lookup.",
-    "expect": { "routeNot": ["who_is", "mention_count", "bypass_general"], "minClaudeCalls": 1 }
+    "expect": {
+      "routeNot": ["who_is", "mention_count", "bypass_general"],
+      "minClaudeCalls": 1,
+      "textIncludes": ["Joe"],
+      "textIncludesAny": [["Adams", "Margaret", "Shauna", "love", "romantic", "relationship"]]
+    }
   },
   {
     "id": "pop-culture-survey",
@@ -150,13 +191,13 @@
     "id": "references-to-a-thing",
     "question": "Are there any references to Mars?",
     "note": "\"references to\" alone used to return the Star Trek list.",
-    "expect": { "routeNot": ["theme_pop_culture"] }
+    "expect": { "routeNot": ["theme_pop_culture"], "textIncludes": ["Mars"] }
   },
   {
     "id": "quoted-phrase-is-a-question",
     "question": "What does \"the Elders left the galaxy long ago\" mean for the plot?",
     "note": "A quoted phrase inside a question is not a request to find the quote.",
-    "expect": { "routeNot": ["quote_lookup"], "minClaudeCalls": 1 }
+    "expect": { "routeNot": ["quote_lookup"], "routerAsked": true, "minClaudeCalls": 2, "textIncludes": ["Elders"] }
   },
   {
     "id": "series-main-characters",
@@ -168,7 +209,7 @@
       "scopeReason": "series",
       "scopeIncludes": ["Columbus Day"],
       "maxClaudeCalls": 0,
-      "textIncludes": ["**Skippy**", "**Joe Bishop**"],
+      "textIncludes": ["**Skippy**", "**Joe Bishop** (Joe, Bishop)", "in 17 books"],
       "textExcludes": ["**The**", "**That**", "**You**", "**Kristang**", "**Ruhar**"]
     }
   },
@@ -177,7 +218,15 @@
     "question": "What does Skippy think of humans?",
     "series": "Expeditionary Force",
     "note": "A series in focus is never narrowed to a first wave: its first six books are read in one round.",
-    "expect": { "route": "open_rag", "scopeReason": "series", "scopeIncludes": ["Columbus Day"], "minClaudeCalls": 7, "maxClaudeCalls": 9 }
+    "expect": {
+      "route": "open_rag",
+      "scopeReason": "series",
+      "scopeIncludes": ["Columbus Day"],
+      "minClaudeCalls": 7,
+      "maxClaudeCalls": 9,
+      "textIncludes": ["Skippy"],
+      "textIncludesAny": [["monkey", "monkeys"]]
+    }
   },
   {
     "id": "recipe-named-dish",
@@ -200,6 +249,126 @@
     "id": "how-do-you-make-is-a-question",
     "question": "How do you make a wormhole shift?",
     "note": "\"How do you make X\" with no passage that lists anything is a reading question for the librarians.",
-    "expect": { "minClaudeCalls": 2, "textExcludes": ["Open **Sources** below"] }
+    "expect": { "minClaudeCalls": 2, "textIncludes": ["wormhole"], "textExcludes": ["Open **Sources** below"] }
+  },
+  {
+    "id": "fact-one-book",
+    "question": "In Columbus Day, what is the name of Joe's hometown?",
+    "note": "Content: one fact from one named book. Chapter 1 names the town eleven times, in two spellings (Thomson 6, Thompson 5).",
+    "expect": {
+      "route": "open_rag",
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "minClaudeCalls": 2,
+      "maxClaudeCalls": 3,
+      "textIncludes": ["Maine"],
+      "textIncludesAny": [["Thomson Corners", "Thompson Corners"]]
+    }
+  },
+  {
+    "id": "compare-two-named-books",
+    "question": "Compare how Skippy first appears in Columbus Day with how Nagatha first appears in Black Ops.",
+    "note": "Content: a comparison across two named books reads exactly those two (it used to read four more), and each side of the comparison carries its book's fact.",
+    "expect": {
+      "route": "open_rag",
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day", "Black Ops"],
+      "minClaudeCalls": 3,
+      "maxClaudeCalls": 5,
+      "textIncludes": ["Skippy", "Nagatha"],
+      "textIncludesAny": [["beer can", "cylinder"], ["submind", "sub-mind", "sub mind"]]
+    }
+  },
+  {
+    "id": "who-is-secondary-character",
+    "question": "Who is Hans Chotek?",
+    "note": "Content: a secondary character, looked up by the full name's short forms from the entity graph (\"Hans\", \"Chotek\").",
+    "expect": {
+      "route": "who_is",
+      "maxClaudeCalls": 1,
+      "minSources": 1,
+      "textIncludes": ["Chotek"],
+      "textIncludesAny": [["diplomat", "United Nations", "UN ", "civilian"]]
+    }
+  },
+  {
+    "id": "who-are-a-group",
+    "question": "Who are the Kristang?",
+    "note": "The entity graph knows the Kristang as a group: answered as a species, not as a person named Kristang.",
+    "expect": {
+      "route": "who_is",
+      "maxClaudeCalls": 1,
+      "minSources": 1,
+      "textIncludes": ["Kristang"],
+      "textIncludesAny": [["species", "alien", "aliens", "lizard", "lizards", "race"]],
+      "textExcludes": ["Kristang is a character", "Kristang is a person"]
+    }
+  },
+  {
+    "id": "books-dont-say",
+    "question": "In Columbus Day, what is the name of Joe Bishop's high school math teacher?",
+    "note": "Content: the honest answer is that the book doesn't say (no math teacher appears anywhere in the library). The answer must not invent a name.",
+    "expect": {
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "minClaudeCalls": 2,
+      "textIncludesAny": [
+        ["doesn't say", "don't say", "does not say", "doesn't mention", "don't mention", "does not mention", "not mentioned", "isn't mentioned", "never mention", "no mention", "doesn't name", "never name", "not named", "isn't named", "doesn't appear", "couldn't find", "didn't find", "nothing about", "doesn't come up", "no information", "isn't in"]
+      ],
+      "textExcludes": ["teacher was named", "teacher's name was", "teacher's name is"]
+    }
+  },
+  {
+    "id": "norwegian-question",
+    "question": "Hva synes Skippy egentlig om mennesker?",
+    "note": "Content: with language Auto the answer comes in the question's language (Norwegian: \"What does Skippy really think of humans?\").",
+    "expect": {
+      "route": "open_rag",
+      "minClaudeCalls": 2,
+      "textIncludes": ["Skippy", " og "],
+      "textIncludesAny": [["mennesker", "menneskene", "menneskeheten"], [" ikke ", " som ", " er "], ["ape", "aper", "apekatt", "monkey"]],
+      "textExcludes": [" the books ", " humans are "]
+    }
+  },
+  {
+    "id": "follow-up-depends-on-previous-turn",
+    "history": [
+      { "role": "user", "content": "Who is Skippy?" },
+      { "role": "assistant", "content": "Skippy is an ancient Elder AI in a shiny cylinder the size of a beer can, who works with Joe Bishop and the Merry Band of Pirates." }
+    ],
+    "question": "What does he usually call Joe?",
+    "note": "Content: \"he\" is Skippy only because of the turn before. The librarians read one question at a time, so the previous question travels with it.",
+    "expect": {
+      "routeNot": ["bypass_general", "who_is", "mention_count"],
+      "minClaudeCalls": 2,
+      "textIncludes": ["Skippy"],
+      "textIncludesAny": [["monkey", "dumdum", "dum-dum", "knucklehead", "numbskull"]]
+    }
+  },
+  {
+    "id": "router-count-paraphrase",
+    "question": "What's the tally for Skippy in Columbus Day?",
+    "note": "No count rule claims \"the tally for\"; the router model sends it to the exact count (dry: the call is planned and the route stays open).",
+    "expect": {
+      "routerAsked": true,
+      "route": "mention_count",
+      "scopeReason": "named",
+      "scopeBooks": ["Columbus Day"],
+      "maxClaudeCalls": 1,
+      "textIncludes": ["766", "not an AI estimate"],
+      "sourcesInclude": ["Columbus Day"]
+    }
+  },
+  {
+    "id": "router-which-books-paraphrase",
+    "question": "Which books is Nagatha in?",
+    "note": "\"Which books is X in\" has no mention verb for the rule to catch; the router model sends it to the per-book lookup.",
+    "expect": {
+      "routerAsked": true,
+      "route": "books_mentioning",
+      "scopeReason": "all",
+      "maxClaudeCalls": 1,
+      "textIncludes": ["Nagatha", "of 18", "not an AI estimate"]
+    }
   }
 ]

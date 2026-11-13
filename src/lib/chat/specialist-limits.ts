@@ -129,6 +129,13 @@ export function wantsMultipleBooks(question: string): boolean {
   );
 }
 
+/** The question reaches past the books it names ("…and the other books", "across the series"). */
+function wantsBeyondNamedBooks(question: string): boolean {
+  return /\b(all (?:the )?books|every book|each book|other books|the others|the rest|the series|whole series|entire series|throughout the series|library)\b/i.test(
+    question
+  );
+}
+
 export async function selectLibrarySpecialists(
   question: string,
   maxBooks = MAX_LIBRARY_SPECIALIST_BOOKS
@@ -141,6 +148,13 @@ export async function selectLibrarySpecialists(
   // Clearly about one named book: read just that one, no semantic ranking needed.
   if (namedBooks.length === 1 && !wantsMultipleBooks(question)) {
     return { books: namedBooks, namedBooks, seedPassages: [] };
+  }
+
+  // "Compare X in Columbus Day and Black Ops": the books to read are the ones named, and
+  // nothing is gained by asking four more librarians about books nobody mentioned.
+  if (namedBooks.length >= 2 && !wantsBeyondNamedBooks(question)) {
+    const books = namedBooks.slice(0, maxBooks);
+    return { books, namedBooks, seedPassages: [] };
   }
 
   const seedPassages = await queryAllBooks(question, MAX_SPECIALIST_SEED_PASSAGES);

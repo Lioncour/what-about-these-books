@@ -28,7 +28,7 @@ export interface UsageInfo {
 }
 
 /** Librarians read at most this many books per question (the server's specialist cap). */
-export const LIBRARIANS_READ_LIMIT = MAX_LIBRARY_SPECIALIST_BOOKS;
+const LIBRARIANS_READ_LIMIT = MAX_LIBRARY_SPECIALIST_BOOKS;
 
 const SCOPE_REASONS: ScopeReason[] = ["named", "focus", "series", "semantic", "all", "picked"];
 const SCOPE_TITLES_SHOWN = 3;
@@ -229,13 +229,17 @@ export function formatDuration(ms: number): string {
   return rest ? `${Math.floor(whole / 60)} min ${rest} s` : `${Math.floor(whole / 60)} min`;
 }
 
-/** "2 calls · 10.5k tokens in · 1.2k out · 12 s" (never a price). */
-export function formatUsageLine(usage: UsageInfo): string {
+/** The usage line's pieces: "2 calls", "10.5k tokens in", "1.2k out", "≈ $0.04", "12 s". */
+export function formatUsageParts(usage: UsageInfo): string[] {
   const time = formatDuration(usage.ms);
   if (usage.claudeCalls <= 0) {
     return usage.embedCalls > 0
-      ? `No AI answer calls · ${usage.embedCalls} meaning search${usage.embedCalls === 1 ? "" : "es"} · ${time}`
-      : `No AI calls · exact text search · ${time}`;
+      ? [
+          "No AI answer calls",
+          `${usage.embedCalls} meaning search${usage.embedCalls === 1 ? "" : "es"}`,
+          time,
+        ]
+      : ["No AI calls", "exact text search", time];
   }
   const cost = typeof usage.costUsd === "number" && usage.costUsd > 0 ? formatCost(usage.costUsd) : "";
   return [
@@ -244,7 +248,20 @@ export function formatUsageLine(usage: UsageInfo): string {
     `${formatTokenCount(usage.outputTokens)} out`,
     ...(cost ? [cost] : []),
     time,
-  ].join(" · ");
+  ];
+}
+
+/** "2 calls · 10.5k tokens in · 1.2k out · ≈ $0.04 · 12 s". */
+export function formatUsageLine(usage: UsageInfo): string {
+  return formatUsageParts(usage).join(" · ");
+}
+
+/** Tooltip of the usage line when it shows a cost. */
+const COST_TOOLTIP = "List price estimate, not your AWS bill";
+
+/** The usage line's tooltip: only when the answer came with a cost. */
+export function usageTooltip(usage: UsageInfo): string | undefined {
+  return typeof usage.costUsd === "number" ? COST_TOOLTIP : undefined;
 }
 
 /**
@@ -255,6 +272,34 @@ export function formatCost(usd: number): string {
   if (!Number.isFinite(usd) || usd <= 0) return "";
   if (usd < 0.01) return "< $0.01";
   return `≈ $${usd < 10 ? usd.toFixed(2) : usd.toFixed(0)}`;
+}
+
+/**
+ * A saved chat's scope in words, for the Past notes drawer: "Whole library", the
+ * book's title, "<Series name> series", "3 picked books". Chats saved before the
+ * scope fields existed fall back to their stored `bookTitle`.
+ */
+export function savedScopeWords(chat: {
+  bookId?: unknown;
+  bookTitle?: unknown;
+  pickedIds?: unknown;
+}): string {
+  const bookId = typeof chat.bookId === "string" ? chat.bookId : "";
+  const bookTitle = typeof chat.bookTitle === "string" ? chat.bookTitle.trim() : "";
+  const picked = Array.isArray(chat.pickedIds)
+    ? new Set(chat.pickedIds.filter((id) => typeof id === "string" && id)).size
+    : 0;
+  if (!bookId) return bookTitle || "Whole library";
+  if (bookId === "all") {
+    if (picked >= 2) return `${picked} picked books`;
+    // The chat list carries only the title of a pick ("3 picked books").
+    return /^\d+ picked books$/.test(bookTitle) ? bookTitle : "Whole library";
+  }
+  if (bookId.startsWith("series:")) {
+    if (!bookTitle) return "A series";
+    return /\bseries$/i.test(bookTitle) ? bookTitle : `${bookTitle} series`;
+  }
+  return bookTitle ? cleanDisplayTitle(bookTitle) : "One book";
 }
 
 /** The tidy preview's "N chapter labels in M books" (empty when nothing changes). */

@@ -45,13 +45,16 @@ export async function specialistsStep(ctx: ChatContext): Promise<boolean> {
   const copy = scope.text.specialists;
   if (copy.roster) ctx.status(copy.roster);
   ctx.checkpoint();
-  const full = await scope.selectSpecialistBooks(ctx.question);
+  // A follow-up ("What does he call Joe?") is read with the question it follows.
+  const reading = ctx.readingQuestion;
+  const full = await scope.selectSpecialistBooks(reading);
   const inWaves =
     scope.kind === "all" &&
     !scope.picked &&
     full.reason === "semantic" &&
     full.books.length > FIRST_WAVE_SPECIALIST_BOOKS &&
     !wantsMultipleBooks(ctx.question);
+  if (reading !== ctx.question) logChatEvent("follow_up_context_added", { question: ctx.question.slice(0, 160) });
   const later = inWaves ? full.books.slice(FIRST_WAVE_SPECIALIST_BOOKS) : [];
   const selection: SpecialistSelection = inWaves
     ? { ...full, books: full.books.slice(0, FIRST_WAVE_SPECIALIST_BOOKS) }
@@ -77,7 +80,7 @@ export async function specialistsStep(ctx: ChatContext): Promise<boolean> {
   const requestFor = (b: BookRef): SpecialistRequest => ({
     bookId: b.id,
     bookTitle: b.title,
-    userQuestion: ctx.question,
+    userQuestion: reading,
     modelId: settings.specialistModelId,
     signal: ctx.signal,
     seedPassages: selection.seedByTitle.get(b.title),
@@ -144,7 +147,7 @@ export async function specialistsStep(ctx: ChatContext): Promise<boolean> {
   ctx.send("SPECIALISTS", JSON.stringify(toSpecialistReports(results)));
   // The answer goes out as TOKEN lines while the orchestrator streams.
   const finalText = await orchestrateSpecialists(
-    ctx.question,
+    reading,
     answers,
     settings.orchestratorModelId,
     settings.personality(),

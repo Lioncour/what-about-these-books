@@ -11,7 +11,53 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 ## [Unreleased]
 
-Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
+Nothing yet.
+
+---
+
+## [0.2.0] — 2026-11-13
+
+Everything on `master` after `2f24d87`: the reading-room UI, then two days of review,
+restructuring and a roadmap pass (2026-11-12 and -13). Newest first.
+
+### Added — check the rest, sharper answers, a router for the unclear cases
+
+- **"Check the other N books"** under an answer that was drawn from part of the library:
+  it asks the same question of the books not read yet (the six closest of them), as its
+  own exchange with its own scope line, and can be repeated until every book is read.
+  Also "Check the rest of the series" and "Ask the whole library instead". The composer's
+  scope is not changed by it. Alt+S opens the book picker.
+- **A hand-picked set larger than six** is read closest-first instead of in shelf order.
+- **Router fallback.** A question no rule claims, but that looks like one of the exact
+  tools (a count word, a quote, "which books", a known character), gets one small call to
+  the librarian model to pick the route (about 300 tokens, under a second); anything
+  unclear or slow stays with the librarians.
+- **Entity graph, second pass** (extraction version 3): plurals and possessives fold into
+  their group, acronyms are groups, ranks and nationalities are not people, and a name has
+  one type across the library. "Unknown" names went from 1,085 to 591. Who-is uses the
+  graph: it searches a character's aliases and answers "Who are the Kristang?" as a group.
+  Main characters are listed with their short forms and the number of books they are in.
+- **Eval checks content, not just routes**: 33 cases, text checks on every generated
+  answer, nine new cases (a fact from one book, a comparison, a secondary character, a
+  group, "the books don't say", a question in Norwegian, a follow-up). Thirteen were
+  verified live; eight text checks are loose and not yet verified live.
+- Follow-up questions with a pronoun carry the previous question to the librarians; with
+  language on Auto the answer follows the question's language; a question naming two or
+  more books reads only those.
+
+### Changed — the installer is half the size
+
+- **205 MB → 105 MB** (unpacked 836 MB → 362 MB; the server folder 134 MB → 32 MB).
+  electron-builder had been packing the project's whole production `node_modules` into
+  `app.asar` although the Electron shell needs none of it; the server now ships only the
+  files a static walk of its imports reaches (19 packages instead of 93 for the index and
+  EPUB reader), and build-only packages and `sharp` are left out. The index is imported
+  from `vectra/lib/LocalDocumentIndex`, so its OpenAI client and web scraper never load.
+- The smoke test now also runs an exact count and a small upload, and fails on any
+  "Cannot find module" in the app's output, so a prune that goes too far cannot pass.
+- **CI builds installers**: a Linux AppImage and the Windows installer are built, smoke
+  tested and uploaded as artifacts on every push to `master`.
+- `docs/RELEASING.md`: how a release is cut, and what signing and a macOS build need.
 
 ### Changed — answers say what they read, and what they cost
 
@@ -341,7 +387,7 @@ Start from a familiar full-stack React framework, keep the library on disk, and 
 | 0.0.1 | `a560fd1` | “It exists” — upload & ask |
 | 0.0.2 | `7c8797c` | “Prove it” — citations |
 | 0.1.0 | `2f24d87` | “Think across books” — specialists / reliability |
-| Unreleased | working tree | “Feel like a friend” — desktop polish, voice, protocol, docs |
+| 0.2.0 | 2026-11-13 | “Trust it” — reading-room UI, review and hardening, scope you can see and choose, cheaper librarians, an installer that works |
 
 ---
 

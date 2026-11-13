@@ -1,5 +1,6 @@
 "use client";
 
+import { savedScopeWords } from "@/components/chat/format";
 import type { ChatSummary } from "@/components/chat/messages";
 
 /** The "Past notes" drawer: saved chats, newest first. */
@@ -38,7 +39,7 @@ export default function PastNotes({
               >
                 <p className="truncate font-medium">{chat.title}</p>
                 <p className="mt-0.5 truncate text-[11px] text-muted">
-                  {chat.bookTitle} · {new Date(chat.updatedAt).toLocaleDateString()}
+                  {savedScopeWords(chat)} · {new Date(chat.updatedAt).toLocaleDateString()}
                 </p>
               </button>
               <button

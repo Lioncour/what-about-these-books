@@ -8,6 +8,7 @@ import {
   countScopeQuestion,
   extractRetryQuestion,
   normalizeUserQuestion,
+  questionWithFollowUpContext,
   resolveCountTarget,
   resolveQuoteMode,
 } from "@/lib/chat/intent";
@@ -46,10 +47,18 @@ export interface ChatContext {
   lastUserMessage: ChatMessage;
   /** The normalised question (a retry request restored to the original question). */
   question: string;
+  /**
+   * The question as the librarians read it: with the reader's previous question when
+   * this one leans on it ("What does he call Joe?"). Otherwise the same as `question`.
+   */
+  readingQuestion: string;
   settings: ChatSettings;
   signal: AbortSignal;
   scope: Scope;
+  /** How the question is answered. Set by the rules; the router model may replace `open_rag` once. */
   route: ChatRoute;
+  /** True once the router model was asked (or, in a dry run, planned) for this request. */
+  routerAsked: boolean;
   /** Who/what an exact count is for, when the message asks for one (or follows one up). */
   mentionTarget: string | null;
   /** Text for an exact-quote lookup, when the message is one. */
@@ -167,10 +176,13 @@ export function buildChatContext(input: {
     messages,
     lastUserMessage,
     question,
+    readingQuestion:
+      settings.ai.useConversationMemory === false ? question : questionWithFollowUpContext(question, messages.slice(0, -1)),
     settings,
     signal,
     scope,
     route,
+    routerAsked: false,
     mentionTarget,
     quoteMode: resolveQuoteMode(question),
     recentConversation,

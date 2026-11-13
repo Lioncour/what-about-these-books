@@ -1,9 +1,11 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   formatScopeLine,
-  formatUsageLine,
+  formatUsageParts,
   scopeReasonHint,
+  usageTooltip,
   type ScopeInfo,
   type UsageInfo,
 } from "@/components/chat/format";
@@ -77,18 +79,75 @@ export function SourcesList({
   );
 }
 
-/** Which books the answer was read from, and why those. */
-export function ScopeLine({ scope }: { scope: ScopeInfo }) {
+/**
+ * Which books the answer was read from, and why those; `action` (the "check the
+ * other books" button) sits on the same line. The pieces wrap as whole pieces and
+ * a wrapped line never starts with a separator (`.dot-row` in globals.css).
+ */
+export function ScopeLine({
+  scope,
+  action,
+  followUp,
+}: {
+  scope: ScopeInfo;
+  action?: ReactNode;
+  /** This answer came from "Check the other books": the app chose these, not the reader. */
+  followUp?: boolean;
+}) {
   const all = scope.books.map((b) => b.title).join("\n");
   return (
-    <p className="text-[13px] text-muted" title={scope.books.length > 1 ? all : undefined}>
-      {formatScopeLine(scope)}
-      <span className="ml-2 text-[12px] text-muted/70">· {scopeReasonHint(scope.reason)}</span>
-    </p>
+    <div className="dot-row text-[13px] text-muted">
+      <div>
+        <span title={scope.books.length > 1 ? all : undefined}>{formatScopeLine(scope)}</span>
+        <span className="text-[12px] text-muted/70">{followUp && scope.reason === "picked" ? "next closest of the rest" : scopeReasonHint(scope.reason)}
+        </span>
+        {action}
+      </div>
+    </div>
   );
 }
 
-/** What the answer took: calls, tokens, time. Never a price. */
+/** The quiet action on the scope line; "Checked" once it has been used. */
+export function ScopeAction({
+  label,
+  used,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  used: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  if (used) return <span className="text-[12px] text-muted/70">Checked</span>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={
+        disabled
+          ? "Wait for the answer to finish"
+          : "Ask the same question again against these books"
+      }
+      className="text-left text-[12px] font-medium text-primary/90 underline decoration-primary/30 underline-offset-[3px] transition-colors hover:text-primary hover:decoration-primary/70 focus-visible:decoration-primary focus-visible:outline-none disabled:cursor-default disabled:text-muted/60 disabled:no-underline"
+    >
+      {label}
+    </button>
+  );
+}
+
+/** What the answer took: calls, tokens, a rough cost when known, time. */
 export function UsageLine({ usage }: { usage: UsageInfo }) {
-  return <p className="text-[12px] tabular-nums text-muted/70">{formatUsageLine(usage)}</p>;
+  return (
+    <div className="dot-row text-[12px] tabular-nums text-muted/70" title={usageTooltip(usage)}>
+      <div>
+        {formatUsageParts(usage).map((part, i) => (
+          <span key={i} className="whitespace-nowrap">
+            {part}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }

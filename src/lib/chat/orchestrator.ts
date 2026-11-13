@@ -79,8 +79,8 @@ export function coverageNote(coverage: ReadingCoverage): string {
       return `What was read: the reader has ${list} open, and the notes come from that book only.`;
     case "picked":
       return (
-        `What was read: the reader picked ${total} ${plural(total)} for this question. The notes come from ${n === total ? "all of them" : `${n} of them`}: ${list}.` +
-        (unread ? ` The other ${unread} were not read; say so if it matters to the answer.` : "")
+        `What was read: the reader picked ${total} ${plural(total)} for this question. The notes come from ${n === total ? "all of them" : `the ${n} closest to the question`}: ${list}.` +
+        (unread ? ` The other ${unread} were not read; say so, and that the reader can ask for them to be checked too.` : "")
       );
     case "series":
       return (

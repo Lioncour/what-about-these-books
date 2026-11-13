@@ -2,7 +2,7 @@ import { logChatEvent } from "@/lib/chat-debug";
 import type { ChatContext } from "@/lib/chat/context";
 import { claudeNaturalAnswer } from "@/lib/chat/orchestrator";
 import { matchToSource } from "@/lib/chat/scope";
-import { deriveMainCharacters } from "@/lib/chat/specialist";
+import { deriveMainCharacters, formatMainCharacter } from "@/lib/chat/specialist";
 import type { ChatSource } from "@/lib/chat/types";
 import { ensureKnowledgeCurrent } from "@/lib/knowledge-rebuild";
 
@@ -19,7 +19,9 @@ export async function mainCharactersStep(ctx: ChatContext): Promise<boolean> {
   const sources: ChatSource[] = [];
   if (mains.length) {
     lines.push(copy.found(mains.length), "", "## Likely main characters");
-    for (const m of mains) lines.push(`- **${m.name}** (mentions: ${m.mentions})`);
+    // People only, by their full name, with the short forms the books use and how
+    // widely they appear: the same in a book, a series and the library.
+    for (const m of mains) lines.push(formatMainCharacter(m));
     for (const m of mains.slice(0, 5)) sources.push(...scope.keyword([m.name], 4).map(matchToSource));
   } else {
     lines.push(copy.none);

@@ -50,10 +50,10 @@
       "passed": true,
       "route": "open_rag",
       "scopeReason": "semantic",
-      "books": 6,
-      "claudeCalls": 7,
-      "inputTokens": 31239,
-      "outputTokens": 3977
+      "books": 3,
+      "claudeCalls": 5,
+      "inputTokens": 16353,
+      "outputTokens": 2146
     },
     "named-book-question": {
       "passed": true,
@@ -78,9 +78,9 @@
       "route": "open_rag",
       "scopeReason": "semantic",
       "books": 3,
-      "claudeCalls": 4,
-      "inputTokens": 12888,
-      "outputTokens": 2123
+      "claudeCalls": 5,
+      "inputTokens": 13308,
+      "outputTokens": 2089
     },
     "open-question-first-wave": {
       "passed": true,
@@ -133,8 +133,8 @@
       "scopeReason": "all",
       "books": 18,
       "claudeCalls": 1,
-      "inputTokens": 2002,
-      "outputTokens": 337
+      "inputTokens": 2033,
+      "outputTokens": 261
     },
     "who-is-with-tail": {
       "passed": true,
@@ -168,9 +168,9 @@
       "route": "open_rag",
       "scopeReason": "semantic",
       "books": 3,
-      "claudeCalls": 4,
-      "inputTokens": 16835,
-      "outputTokens": 3016
+      "claudeCalls": 5,
+      "inputTokens": 17310,
+      "outputTokens": 2929
     },
     "series-main-characters": {
       "passed": true,
@@ -216,6 +216,87 @@
       "claudeCalls": 4,
       "inputTokens": 16514,
       "outputTokens": 2384
+    },
+    "who-is-secondary-character": {
+      "passed": true,
+      "route": "who_is",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 1736,
+      "outputTokens": 260
+    },
+    "who-are-a-group": {
+      "passed": true,
+      "route": "who_is",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 1761,
+      "outputTokens": 262
+    },
+    "router-count-paraphrase": {
+      "passed": true,
+      "route": "mention_count",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 1,
+      "inputTokens": 308,
+      "outputTokens": 19
+    },
+    "router-which-books-paraphrase": {
+      "passed": true,
+      "route": "books_mentioning",
+      "scopeReason": "all",
+      "books": 18,
+      "claudeCalls": 1,
+      "inputTokens": 303,
+      "outputTokens": 20
+    },
+    "fact-one-book": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 9692,
+      "outputTokens": 649
+    },
+    "compare-two-named-books": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 2,
+      "claudeCalls": 3,
+      "inputTokens": 22832,
+      "outputTokens": 2049
+    },
+    "books-dont-say": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "named",
+      "books": 1,
+      "claudeCalls": 2,
+      "inputTokens": 10064,
+      "outputTokens": 566
+    },
+    "norwegian-question": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 16958,
+      "outputTokens": 2971
+    },
+    "follow-up-depends-on-previous-turn": {
+      "passed": true,
+      "route": "open_rag",
+      "scopeReason": "semantic",
+      "books": 3,
+      "claudeCalls": 4,
+      "inputTokens": 16580,
+      "outputTokens": 1915
     }
   }
 }

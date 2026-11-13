@@ -7,6 +7,7 @@
 
 import fs from "fs";
 import path from "path";
+import { copyReachable, packageOfFile, reachableFiles, resolveFrom } from "./standalone-deps.mjs";
 
 const root = process.cwd();
 const standaloneDir = path.join(root, ".next", "standalone");
@@ -51,8 +52,11 @@ if (fs.existsSync(runtimeSrc) && fs.existsSync(runtimeDest)) {
 // leaves a link for each in `.next/node_modules/<name>-<hash>` that points into the
 // project's own node_modules (an absolute path on Windows), and traces their
 // dependencies only partly (`uuid` arrives as a bare package.json). That works on the
-// machine that built it and nowhere else. Replace each link with a real copy and bring
-// the package's whole production dependency tree into the standalone node_modules.
+// machine that built it and nowhere else. Replace each link with real files, and bring
+// along exactly what those packages can load: a walk over `require`/`import` from the
+// modules the server asks for (scripts/standalone-deps.mjs), not the packages' whole
+// dependency trees, which are mostly an OpenAI client, a web scraper and a CLI.
+// `node scripts/trace-server-modules.mjs` shows what the running server really loads.
 const projectModules = path.join(root, "node_modules");
 const standaloneModules = path.join(standaloneDir, "node_modules");
 const linkDir = path.join(standaloneDir, ".next", "node_modules");
@@ -64,48 +68,90 @@ const readPackage = (dir) => {
     return null;
   }
 };
-const copyReal = (from, to) => {
-  fs.rmSync(to, { recursive: true, force: true });
-  fs.cpSync(from, to, { recursive: true, dereference: true });
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
 };
 
-/** Copy a root-level package and, transitively, every root-level package it depends on. */
-function shipWithDependencies(startNames) {
-  const done = new Set();
-  const queue = [...startNames];
-  while (queue.length) {
-    const name = queue.shift();
-    if (done.has(name)) continue;
-    done.add(name);
-    const from = path.join(projectModules, name);
-    const pkg = readPackage(from);
-    if (!pkg) continue; // optional dependency that isn't installed on this platform
-    copyReal(from, path.join(standaloneModules, name));
-    for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
-      // A dependency nested inside the package came along with the copy.
-      if (fs.existsSync(path.join(from, "node_modules", dep, "package.json"))) continue;
-      queue.push(dep);
+/** Every `require("<link>")` / `require("<link>/sub/path.js")` in the server's code. */
+function requestedPaths(linkName) {
+  const found = new Set();
+  // Link names are a package name and a hash: letters, digits, dots, dashes, underscores.
+  const escaped = linkName.replace(/[^\w-]/g, (ch) => "\\" + ch);
+  const pattern = new RegExp("[\"'`]" + escaped + "(/[^\"'`]*)?[\"'`]", "g");
+  const scan = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") scan(full);
+      } else if (/\.(c|m)?js$/.test(entry.name)) {
+        for (const match of fs.readFileSync(full, "utf8").matchAll(pattern)) found.add(match[1] || "");
+      }
     }
-  }
-  return done;
+  };
+  scan(path.join(standaloneDir, ".next", "server"));
+  return [...found];
 }
 
+const shippedExternals = [];
 if (fs.existsSync(linkDir)) {
-  const externals = [];
+  const externals = []; // { name, link }
+  const entries = [];
   for (const entry of fs.readdirSync(linkDir)) {
     const linkPath = path.join(linkDir, entry);
     const name = readPackage(linkPath)?.name || entry.replace(/-[0-9a-f]{8,}$/, "");
-    const source = path.join(projectModules, name);
-    if (!readPackage(source)) {
-      console.error(`External package ${name} (${entry}) is not installed; cannot ship it.`);
-      process.exit(1);
+    if (!readPackage(path.join(projectModules, name))) {
+      fail(`External package ${name} (${entry}) is not installed; cannot ship it.`);
     }
-    copyReal(source, linkPath);
-    externals.push(name);
+    const subpaths = requestedPaths(entry);
+    // Nothing found means the build changed how it names externals: ship the package's
+    // main module rather than guess.
+    for (const sub of subpaths.length ? subpaths : [""]) {
+      try {
+        entries.push(resolveFrom(root, name + sub));
+      } catch {
+        fail(`The server requires ${name}${sub}, which does not resolve in node_modules.`);
+      }
+    }
+    externals.push({ name, link: linkPath, subpaths });
   }
-  const shipped = shipWithDependencies(externals);
-  console.log(`Shipped external packages ${externals.join(", ")} with ${shipped.size - externals.length} dependencies`);
+
+  const reach = reachableFiles(entries);
+  // Start clean: whatever the build traced for these packages is replaced, not merged.
+  for (const file of reach.files) {
+    const pkg = packageOfFile(file);
+    const top = path.relative(projectModules, pkg.dir).split(path.sep);
+    const topDir = path.join(standaloneModules, top[0].startsWith("@") ? path.join(top[0], top[1]) : top[0]);
+    if (fs.existsSync(topDir)) fs.rmSync(topDir, { recursive: true, force: true });
+  }
+  const packages = copyReachable(reach, projectModules, standaloneModules);
+  for (const { name, link } of externals) {
+    fs.rmSync(link, { recursive: true, force: true });
+    fs.cpSync(path.join(standaloneModules, name), link, { recursive: true });
+    shippedExternals.push(name);
+  }
+  const bytes = [...reach.files].reduce((n, f) => n + fs.statSync(f).size, 0);
+  console.log(
+    `Shipped external packages ${externals.map((e) => `${e.name}${e.subpaths.filter(Boolean).join(",")}`).join(", ")} ` +
+      `with what they load: ${reach.files.size} files from ${packages.length} packages (${(bytes / 1048576).toFixed(1)} MB)`
+  );
+  for (const [dir, reason] of reach.whole) console.log(`  whole package: ${path.relative(projectModules, dir)} (${reason})`);
+  for (const { from, spec } of reach.unresolved) {
+    console.log(`  not installed, so not shipped: "${spec}" asked for by ${path.relative(projectModules, from)}`);
+  }
 }
+
+// Traced by the build, never loaded by the server: the TypeScript compiler (next.config.ts
+// is compiled at build time), type declarations, and sharp, which only serves next/image
+// and this app renders no optimised images (`images.unoptimized` in next.config.ts).
+const dropped = [];
+for (const name of ["typescript", "@types", "sharp", "@img", "detect-libc"]) {
+  const dir = path.join(standaloneModules, name);
+  if (!fs.existsSync(dir)) continue;
+  fs.rmSync(dir, { recursive: true, force: true });
+  dropped.push(name);
+}
+if (dropped.length) console.log(`Removed build-only packages: ${dropped.join(", ")}`);
 
 // Nothing in what ships may point outside it.
 const links = [];
@@ -155,9 +201,9 @@ for (const needed of [
   "server.js",
   "node_modules/next/package.json",
   "node_modules/next/dist/compiled/next-server/app-route-turbo.runtime.prod.js",
-  "node_modules/vectra/package.json",
   "node_modules/uuid/dist/cjs/index.js",
   ".next/BUILD_ID",
+  ...shippedExternals.map((name) => `node_modules/${name}/package.json`),
 ]) {
   if (!fs.existsSync(path.join(standaloneDir, needed))) {
     console.error(`Standalone output is incomplete: missing ${needed}`);

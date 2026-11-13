@@ -2,7 +2,9 @@
  * The Vectra semantic index (index/): one in-process instance, serialised updates, and
  * the operations that have to keep index, catalog and text files in step.
  */
-import { LocalDocumentIndex } from "vectra";
+// The one module we use, not the package index: the index also loads an OpenAI client,
+// axios, cheerio, turndown and a CLI that this app never calls (and would have to ship).
+import { LocalDocumentIndex } from "vectra/lib/LocalDocumentIndex";
 import { BedrockEmbeddings } from "@/lib/bedrock-embeddings";
 import { removeBookFromKnowledge } from "@/lib/knowledge-store";
 import { removeBookFromQuality } from "@/lib/quality-store";

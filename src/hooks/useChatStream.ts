@@ -3,8 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import type { Source } from "@/components/chat/MessageExtras";
 import { parseScope, parseUsage, type ScopeInfo } from "@/components/chat/format";
+import { oneOffRequest, type OneOffScope } from "@/components/chat/followUp";
 import type { FocusBook, Message } from "@/components/chat/messages";
-import { scopeToRequest } from "@/components/chat/scope";
+import { scopeToRequest, type ScopeRequest } from "@/components/chat/scope";
 import { decodeStreamLine } from "@/lib/chat/stream-protocol";
 
 function isAbortError(err: unknown): boolean {
@@ -16,6 +17,16 @@ function isAbortError(err: unknown): boolean {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : "Unknown error";
+}
+
+/** What a caller can say about one question beyond its text. */
+export interface SendOptions {
+  /** Ask this one question against these books; the composer's scope stays as it is. */
+  scope?: OneOffScope;
+  /** A small line shown above the question ("Check the other 15 books"). */
+  label?: string;
+  /** Index of the answer whose "check more" action this is; it is marked as used. */
+  checkedIndex?: number;
 }
 
 /**
@@ -64,7 +75,7 @@ export function useChatStream({
   }, []);
 
   const stream = useCallback(
-    async (history: Message[]) => {
+    async (history: Message[], request: ScopeRequest) => {
       const run = ++runRef.current;
       const controller = new AbortController();
       abortRef.current = controller;
@@ -75,7 +86,7 @@ export function useChatStream({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             // A series focus goes as bookId "series:<id>" with the series name.
-            ...scopeToRequest(focus, pickedIds),
+            ...request,
             messages: history.map((m) => ({
               role: m.role,
               content: m.content,
@@ -208,24 +219,43 @@ export function useChatStream({
         finishRun(run);
       }
     },
-    [focus, pickedIds, onLibraryChanged, finishRun]
+    [onLibraryChanged, finishRun]
   );
 
-  /** Ask a question. Returns false when there is nothing to send or an answer is in flight. */
+  /**
+   * Ask a question against the composer's scope, or against `options.scope` for this
+   * one request. Returns false when there is nothing to send or an answer is in flight.
+   */
   const send = useCallback(
-    (text: string): boolean => {
+    (text: string, options: SendOptions = {}): boolean => {
       const trimmed = text.trim();
       if (!trimmed || isLoading) return false;
-      const history: Message[] = [...messages, { role: "user", content: trimmed }];
+      const request = options.scope ? oneOffRequest(options.scope) : scopeToRequest(focus, pickedIds);
+      const question: Message = {
+        role: "user",
+        content: trimmed,
+        ...(options.label ? { label: options.label } : {}),
+        asked: {
+          bookId: request.bookId,
+          ...(request.bookIds ? { bookIds: request.bookIds } : {}),
+          ...(options.scope ? { followUp: true } : {}),
+        },
+      };
+      const at = options.checkedIndex;
+      const earlier =
+        at !== undefined && messages[at]?.role === "assistant"
+          ? messages.map((m, i) => (i === at ? { ...m, checked: true } : m))
+          : messages;
+      const history: Message[] = [...earlier, question];
       setMessages(history);
       setIsLoading(true);
       setThinkingSteps([]);
       setHasAssistantTokens(false);
       setPendingScope(null);
-      void stream(history);
+      void stream(history, request);
       return true;
     },
-    [messages, isLoading, stream]
+    [messages, isLoading, stream, focus, pickedIds]
   );
 
   /** A question answered without the chat endpoint (character page, contradictions). */

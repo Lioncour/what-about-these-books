@@ -6,7 +6,7 @@
 import type { ScopeInfo } from "@/components/chat/format";
 import type { FocusBook } from "@/components/chat/messages";
 
-export const SERIES_FOCUS_PREFIX = "series:";
+const SERIES_FOCUS_PREFIX = "series:";
 
 /** A book as the scope picker and these helpers need it. */
 export interface ScopeBook {
@@ -34,7 +34,7 @@ export function seriesIdOfFocus(focusId: string | null | undefined): string | nu
   return focusId.slice(SERIES_FOCUS_PREFIX.length) || null;
 }
 
-export function seriesFocus(series: { id: string; name: string }): FocusBook {
+function seriesFocus(series: { id: string; name: string }): FocusBook {
   return { id: `${SERIES_FOCUS_PREFIX}${series.id}`, title: series.name };
 }
 

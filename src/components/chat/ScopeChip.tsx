@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   askingHint,
   formatAskingLine,
@@ -10,6 +10,13 @@ import {
 import { exactSeriesFor, type ScopeSeries } from "@/components/chat/scope";
 import type { LibraryBook } from "@/hooks/useLibrary";
 
+export interface ScopeChipHandle {
+  /** Open the picker (Alt+S in the composer) and put the keyboard in it. */
+  open: () => void;
+}
+
+const PICKER_TITLE = "Choose which books to ask (Alt+S)";
+
 /**
  * Above the question field: which books the question will be asked against, and a
  * picker to change that before sending. Nothing picked means the whole library, one
@@ -17,29 +24,49 @@ import type { LibraryBook } from "@/hooks/useLibrary";
  * or more are read together and nothing else is.
  */
 export default function ScopeChip({
+  ref,
   preview,
   books,
   series,
   selectedIds,
   onApply,
+  onDismiss,
 }: {
+  ref?: Ref<ScopeChipHandle>;
   preview: ScopeInfo;
   books: LibraryBook[];
   series: ScopeSeries[];
   /** The focus book, the series' books or the picked set, as the picker's starting point. */
   selectedIds: string[];
   onApply: (ids: string[]) => void;
+  /** The picker was closed with Escape, nothing chosen. */
+  onDismiss?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  const openPicker = () => {
+    setDraft(selectedIds);
+    setFilter("");
+    setOpen(true);
+  };
+  useImperativeHandle(ref, () => ({ open: openPicker }));
+
+  // An open picker takes the keyboard: the filter when there is one, else the first box.
+  useEffect(() => {
+    if (open) dialogRef.current?.querySelector("input")?.focus();
+  }, [open]);
 
   // Close on Escape or a click outside; an open picker is a small modal moment.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      onDismiss?.();
     };
     const onDown = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false);
@@ -50,7 +77,7 @@ export default function ScopeChip({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onDown);
     };
-  }, [open]);
+  }, [open, onDismiss]);
 
   const groups = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -98,16 +125,10 @@ export default function ScopeChip({
     <div className="relative mb-1.5" ref={panelRef}>
       <button
         type="button"
-        onClick={() => {
-          if (!open) {
-            setDraft(selectedIds);
-            setFilter("");
-          }
-          setOpen(!open);
-        }}
+        onClick={() => (open ? setOpen(false) : openPicker())}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title="Choose which books to ask"
+        title={PICKER_TITLE}
         className="group flex max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[12px] text-muted transition-colors hover:text-foreground"
       >
         <span className="truncate">
@@ -124,6 +145,7 @@ export default function ScopeChip({
 
       {open && (
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label="Choose which books to ask"
           className="absolute bottom-full left-0 z-30 mb-2 flex max-h-[min(60vh,26rem)] w-[min(26rem,calc(100vw-3rem))] flex-col rounded-xl border border-border bg-surface shadow-2xl animate-fade-in"

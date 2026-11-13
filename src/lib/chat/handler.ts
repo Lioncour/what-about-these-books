@@ -12,6 +12,7 @@ import { booksMentioningStep, exactCountStep } from "@/lib/chat/steps/mention-co
 import { passageFindStep } from "@/lib/chat/steps/passage-find";
 import { quoteLookupStep } from "@/lib/chat/steps/quote-lookup";
 import { ragStep } from "@/lib/chat/steps/rag";
+import { routeFallbackStep } from "@/lib/chat/steps/route-fallback";
 import { smallTalkStep } from "@/lib/chat/steps/small-talk";
 import { specialistsStep } from "@/lib/chat/steps/specialists";
 import { themeSurveyStep } from "@/lib/chat/steps/theme-survey";
@@ -38,6 +39,8 @@ const announceSearch: ChatStep = (ctx) => {
  */
 const PIPELINE: ChatStep[] = [
   libraryCommandStep,
+  // Never answers: lets the router model pick a tool for an ambiguous open question.
+  routeFallbackStep,
   exactCountStep,
   booksMentioningStep,
   announceRoute,
@@ -73,7 +76,12 @@ async function runPipeline(
   input: ChatRequest,
   writer: StreamWriter,
   signal: AbortSignal,
-  opts: { dryRun?: boolean; fresh?: boolean; onRoute?: (route: ChatRoute) => void } = {}
+  opts: {
+    dryRun?: boolean;
+    fresh?: boolean;
+    /** Called with the rule's route, and again if the router model changed it. */
+    onRoute?: (route: ChatRoute, routerAsked: boolean) => void;
+  } = {}
 ): Promise<void> {
   const startedAt = Date.now();
   const usage = emptyUsage();
@@ -81,10 +89,12 @@ async function runPipeline(
   try {
     await runWithRequestContext({ signal, usage, dryRun: opts.dryRun, fresh: opts.fresh }, async () => {
       ctx = buildChatContext({ ...input, signal, writer });
-      opts.onRoute?.(ctx.route);
+      opts.onRoute?.(ctx.route, false);
       for (const step of PIPELINE) {
         ctx.checkpoint();
-        if (await step(ctx)) break;
+        const answered = await step(ctx);
+        if (step === routeFallbackStep && ctx.routerAsked) opts.onRoute?.(ctx.route, true);
+        if (answered) break;
       }
       // Answers that read no book (commands, small talk, graph lookups) say so: no books.
       ctx.announceScope([]);
@@ -120,10 +130,11 @@ async function runPipeline(
 export async function runChatInProcess(
   input: { bookId: string; bookTitle: string; bookIds?: string[]; messages?: ChatMessage[]; question: string },
   opts: { dryRun?: boolean; signal?: AbortSignal } = {}
-): Promise<{ lines: string[]; route: ChatRoute | null }> {
+): Promise<{ lines: string[]; route: ChatRoute | null; routerAsked: boolean }> {
   const lastUserMessage: ChatMessage = { role: "user", content: input.question };
   const writer = createCollectingWriter();
   let route: ChatRoute | null = null;
+  let routerAsked = false;
   await runPipeline(
     {
       bookId: input.bookId,
@@ -135,9 +146,16 @@ export async function runChatInProcess(
     writer,
     opts.signal ?? new AbortController().signal,
     // In-process runs are eval runs: never served from the librarian cache.
-    { dryRun: opts.dryRun, fresh: true, onRoute: (r) => (route = r) }
+    {
+      dryRun: opts.dryRun,
+      fresh: true,
+      onRoute: (r, asked) => {
+        route = r;
+        routerAsked = asked;
+      },
+    }
   );
-  return { lines: writer.lines, route };
+  return { lines: writer.lines, route, routerAsked };
 }
 
 export async function POST(request: NextRequest) {
