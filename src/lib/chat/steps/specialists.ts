@@ -153,6 +153,12 @@ export async function specialistsStep(ctx: ChatContext): Promise<boolean> {
       onToken: ctx.emitToken,
       continuityHint: ctx.continuityHint,
       signal: ctx.signal,
+      coverage: {
+        reason: full.reason,
+        read: titlesOf(asked.map((a) => ({ id: a.request.bookId, title: a.request.bookTitle }))),
+        total: scope.books.length,
+        seriesName: scope.series?.name,
+      },
     }
   );
   logChatEvent("chat_answer_emitted", {

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { costUsd } from "@/lib/model-prices";
 
 /** What one chat request spent on Bedrock (the USAGE stream line). */
 export interface RequestUsage {
@@ -6,6 +7,11 @@ export interface RequestUsage {
   inputTokens: number;
   outputTokens: number;
   embedCalls: number;
+  /**
+   * Rough cost of the Claude calls in US dollars at list prices (see model-prices.ts);
+   * null when a call used a model without a known price.
+   */
+  costUsd: number | null;
 }
 
 interface RequestContext {
@@ -24,7 +30,7 @@ export const DRY_RUN_TEXT = "[dry run: Claude call skipped]";
 const storage = new AsyncLocalStorage<RequestContext>();
 
 export function emptyUsage(): RequestUsage {
-  return { claudeCalls: 0, inputTokens: 0, outputTokens: 0, embedCalls: 0 };
+  return { claudeCalls: 0, inputTokens: 0, outputTokens: 0, embedCalls: 0, costUsd: 0 };
 }
 
 /**
@@ -67,12 +73,16 @@ export function currentRequestSignal(): AbortSignal | undefined {
 }
 
 /** Add one Claude call to the current request (no-op outside a request). */
-export function recordRequestClaudeCall(inputTokens: number, outputTokens: number): void {
+export function recordRequestClaudeCall(inputTokens: number, outputTokens: number, modelId?: string): void {
   const usage = storage.getStore()?.usage;
   if (!usage) return;
   usage.claudeCalls += 1;
   usage.inputTokens += Math.max(0, Math.floor(inputTokens || 0));
   usage.outputTokens += Math.max(0, Math.floor(outputTokens || 0));
+  // A planned (dry-run) call has no tokens and no model: it costs nothing.
+  if (!inputTokens && !outputTokens) return;
+  const cost = modelId ? costUsd(modelId, inputTokens, outputTokens) : null;
+  usage.costUsd = cost === null || usage.costUsd === null ? null : usage.costUsd + cost;
 }
 
 /** Add one Titan embedding call to the current request (no-op outside a request). */

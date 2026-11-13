@@ -81,7 +81,7 @@ export async function callClaudeText(
   const text = parsed.content?.find((c) => c.type === "text")?.text || "";
   const inputTokens = parsed.usage?.input_tokens || 0;
   const outputTokens = parsed.usage?.output_tokens || 0;
-  recordRequestClaudeCall(inputTokens, outputTokens);
+  recordRequestClaudeCall(inputTokens, outputTokens, resolvedModel);
   recordTokenUsage({
     kind: "claude",
     modelId: resolvedModel,
@@ -171,7 +171,7 @@ export async function callClaudeStream(
     () => !emitted
   );
 
-  recordRequestClaudeCall(inputTokens, outputTokens);
+  recordRequestClaudeCall(inputTokens, outputTokens, resolvedModel);
   recordTokenUsage({
     kind: "claude",
     modelId: resolvedModel,

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatCost } from "@/components/chat/format";
 import { useCallback, useEffect, useState } from "react";
 
 type UsageBucket = {
@@ -23,7 +24,10 @@ type TokenUsageSummary = {
     embeddingTokens: number;
     calls: number;
     tokens: number;
+    costUsd?: number | null;
   }>;
+  costUsd?: number;
+  costPartial?: boolean;
   recent: Array<{
     id: string;
     at: string;
@@ -113,6 +117,12 @@ export default function TokenUsageSection() {
                     {formatTokens(usage.totals.outputTokens)} out ·{" "}
                     {formatTokens(usage.totals.embeddingTokens)} embed
                   </p>
+                  {typeof usage.costUsd === "number" && usage.costUsd > 0 && (
+                    <p className="mt-1 text-xs text-muted" title="List prices per million tokens, not your AWS bill. Override with MODEL_PRICES_JSON.">
+                      {formatCost(usage.costUsd)}
+                      {usage.costPartial ? " + models without a known price" : ""} at list prices
+                    </p>
+                  )}
                 </div>
                 <div className="rounded-xl border border-border bg-background px-3 py-3">
                   <p className="text-[11px] uppercase tracking-wide text-muted">Today</p>
@@ -152,6 +162,9 @@ export default function TokenUsageSection() {
                         </span>
                         <span className="shrink-0 tabular-nums text-foreground">
                           {formatTokens(row.tokens)} · {row.calls} calls
+                          {typeof row.costUsd === "number" && row.costUsd > 0 && (
+                            <span className="text-muted"> · {formatCost(row.costUsd)}</span>
+                          )}
                         </span>
                       </li>
                     ))}

@@ -156,7 +156,6 @@ export default function Home() {
               <UploadArea
                 onBookLoaded={handleBookLoaded}
                 onBooksChanged={refreshLibrary}
-                compact
               />
             )}
             <BookLibrary

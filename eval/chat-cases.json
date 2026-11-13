@@ -99,8 +99,8 @@
   {
     "id": "short-plot-question",
     "question": "Does Joe survive?",
-    "note": "Short questions without a keyword used to skip the books entirely.",
-    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1, "maxClaudeCalls": 7 }
+    "note": "Short questions without a keyword used to skip the books entirely. The answer must not pretend the reader asked about the three books that were chosen for them.",
+    "expect": { "routeNot": ["bypass_general"], "minClaudeCalls": 1, "maxClaudeCalls": 7, "textExcludes": ["you're asking about", "you asked about"] }
   },
   {
     "id": "open-question-first-wave",

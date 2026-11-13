@@ -23,6 +23,8 @@ export interface UsageInfo {
   outputTokens: number;
   embedCalls: number;
   ms: number;
+  /** Rough cost in US dollars at list prices; absent or null when unknown. */
+  costUsd?: number | null;
 }
 
 /** Librarians read at most this many books per question (the server's specialist cap). */
@@ -64,6 +66,9 @@ export function normalizeUsage(value: unknown): UsageInfo | null {
     outputTokens: Math.floor(count(raw.outputTokens)),
     embedCalls: Math.floor(count(raw.embedCalls)),
     ms: count(raw.ms),
+    ...(typeof raw.costUsd === "number" && Number.isFinite(raw.costUsd) && raw.costUsd >= 0
+      ? { costUsd: raw.costUsd }
+      : {}),
   };
 }
 
@@ -232,12 +237,24 @@ export function formatUsageLine(usage: UsageInfo): string {
       ? `No AI answer calls · ${usage.embedCalls} meaning search${usage.embedCalls === 1 ? "" : "es"} · ${time}`
       : `No AI calls · exact text search · ${time}`;
   }
+  const cost = typeof usage.costUsd === "number" && usage.costUsd > 0 ? formatCost(usage.costUsd) : "";
   return [
     `${usage.claudeCalls} call${usage.claudeCalls === 1 ? "" : "s"}`,
     `${formatTokenCount(usage.inputTokens)} tokens in`,
     `${formatTokenCount(usage.outputTokens)} out`,
+    ...(cost ? [cost] : []),
     time,
   ].join(" · ");
+}
+
+/**
+ * A rough dollar amount: "≈ $0.04", "≈ $1.20", and "< $0.01" for the small change. The
+ * "≈" is part of it: these are list prices, not the bill.
+ */
+export function formatCost(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return "";
+  if (usd < 0.01) return "< $0.01";
+  return `≈ $${usd < 10 ? usd.toFixed(2) : usd.toFixed(0)}`;
 }
 
 /** The tidy preview's "N chapter labels in M books" (empty when nothing changes). */

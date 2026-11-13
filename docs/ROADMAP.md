@@ -7,29 +7,25 @@ changelog is the record).
 
 ## Next
 
-1. **Answers that overstate their scope.** Asked "Does Joe survive?" with the whole
-   library in play, the answer says "across all three books you're asking about". The
-   reader asked about no books; the librarians chose three. The orchestrator prompt should
-   say which books were read ("in the three books I looked at") and offer to read more.
-2. **Entity graph, second pass.** Names are now found by evidence, but a place like
+1. **Entity graph, second pass.** Names are now found by evidence, but a place like
    "Thomson Corners" can still read as a person, and 1,085 names stay "unknown". Use the
    graph for more than main characters (who-is lookups, the scope chip), and consider one
    Haiku pass per book at ingest for the top 50 names.
-3. **Installer on a clean machine.** The packaged app passes the smoke test here, where
+2. **Installer on a clean machine.** The packaged app passes the smoke test here, where
    Node, AWS CLI and a library already exist. Install `dist/What About This Book Setup`
    on a machine without them and walk the first-run path (AWS profile dialog, empty
    library, first upload). Then cut a release: bump the version, rename Unreleased.
 
 ## Soon
 
-4. **Token cost in currency** on the usage line and the settings page (needs a price
-   table per model; Haiku and Opus now differ a lot, so tokens alone mislead).
-5. **LLM router fallback.** When no heuristic in `intent.ts` fires with confidence, one
+3. **LLM router fallback.** When no heuristic in `intent.ts` fires with confidence, one
    small Haiku call could pick the route instead of defaulting to the librarians.
-6. **Saved chats and the scope picker.** A chat remembers its pick; show it in Past
-   notes ("3 picked books") and let a question be re-asked against a different scope.
-7. **Upload**: the non-compact `UploadArea` variant is unused; remove it or use it for an
-   empty library.
+4. **Re-ask against a different scope.** A saved chat shows and restores its scope; a
+   button on an answer could ask the same question of other books ("check the rest").
+   The answers now offer that in words.
+5. **Check the price table.** `model-prices.ts` holds list prices as known in November
+   2026. Compare once with the AWS bill and correct the table (or set
+   `MODEL_PRICES_JSON`), especially for the EU inference profiles.
 
 ## Later
 

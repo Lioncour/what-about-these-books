@@ -1,3 +1,4 @@
+import { costUsd } from "@/lib/model-prices";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, ensureDataDir, ensureDir, writeJsonAtomic } from "@/lib/runtime-config";
@@ -269,9 +270,15 @@ export function getTokenUsageSummary() {
           kind === "embedding"
             ? stats.embeddingTokens
             : stats.inputTokens + stats.outputTokens,
+        // Rough cost at list prices; null for a model that isn't in the price table.
+        costUsd:
+          kind === "embedding"
+            ? costUsd(rest.join(":") || key, stats.embeddingTokens, 0)
+            : costUsd(rest.join(":") || key, stats.inputTokens, stats.outputTokens),
       };
     })
     .sort((a, b) => b.tokens - a.tokens);
+  const pricedRows = byModel.filter((row) => row.costUsd !== null);
 
   return {
     totals,
@@ -284,6 +291,9 @@ export function getTokenUsageSummary() {
       claudeTokens: last7.inputTokens + last7.outputTokens,
     },
     byModel,
+    /** Sum over the models with a known price; `costPartial` says some had none. */
+    costUsd: pricedRows.reduce((sum, row) => sum + (row.costUsd || 0), 0),
+    costPartial: pricedRows.length < byModel.length,
     recent: [...data.events].reverse().slice(0, 25),
     updatedAt: data.updatedAt,
   };

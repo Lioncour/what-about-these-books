@@ -90,7 +90,9 @@ describe("per-request usage accounting", () => {
       // Vectors come back normalised.
       expect(embedded.output?.[0]).toEqual([0.6, 0.8]);
     });
-    expect(usage).toEqual({ claudeCalls: 2, inputTokens: 320, outputTokens: 70, embedCalls: 3 });
+    expect(usage).toMatchObject({ claudeCalls: 2, inputTokens: 320, outputTokens: 70, embedCalls: 3 });
+    // A rough cost rides along: a number for a model in the price table, null otherwise.
+    expect(usage.costUsd === null || usage.costUsd > 0).toBe(true);
     // The global store still records every call.
     expect(recordTokenUsage).toHaveBeenCalledTimes(5);
   });

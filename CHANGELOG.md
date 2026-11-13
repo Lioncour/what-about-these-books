@@ -13,6 +13,20 @@ Versions follow [SemVer](https://semver.org/) when we cut releases.
 
 Work on `master` after `2f24d87` (desktop packaging, chat modularization, friend-voice UI, hygiene).
 
+### Changed — answers say what they read, and what they cost
+
+- **An answer no longer claims more than it read.** The orchestrator is told which books
+  the notes come from and how they were chosen (`coverageNote` in `chat/orchestrator.ts`).
+  An open library question answered from the three closest books now says "in the 3
+  books I looked at (…)" and offers to check the rest, where it used to say "across all
+  three books you're asking about". Named, picked and focus books say so plainly.
+- **Rough cost in dollars** next to the tokens: "4 calls · 16.8k tokens in · 2.7k out ·
+  ≈ $0.04 · 24 s" under an answer, and per model in Settings → Token usage. Prices are
+  list prices per million tokens in `src/lib/model-prices.ts` (override with
+  `MODEL_PRICES_JSON`); they are not read from the AWS bill, hence the "≈". A model
+  without a known price shows no amount.
+- Removed the unused full-size upload variant.
+
 ### Measured — Haiku librarians against Sonnet (2026-11-13)
 
 The full eval run live twice on the real library, librarians on Haiku 4.5 and on

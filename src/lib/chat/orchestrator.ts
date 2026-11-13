@@ -48,6 +48,59 @@ function buildFallbackFromSpecialists(question: string, specialists: SpecialistA
   return lines.join("\n");
 }
 
+/** Which books the notes come from, and how they came to be the ones read. */
+export interface ReadingCoverage {
+  /** How the books were chosen: the SCOPE reason. */
+  reason: "named" | "focus" | "series" | "semantic" | "all" | "picked";
+  /** Display titles of the books whose notes follow. */
+  read: string[];
+  /** Books in the scope the reader set (the library, the series, their pick). */
+  total: number;
+  /** Name of the series in focus, for "series". */
+  seriesName?: string;
+}
+
+/**
+ * Tells the model what it is looking at, so the answer doesn't claim more than was
+ * read. Without this, a question asked of the whole library and answered from the three
+ * closest books came back as "across all three books you're asking about": the reader
+ * asked about none of them.
+ */
+export function coverageNote(coverage: ReadingCoverage): string {
+  const { reason, read, total } = coverage;
+  const list = read.join(", ");
+  const n = read.length;
+  const unread = Math.max(0, total - n);
+  const plural = (count: number) => (count === 1 ? "book" : "books");
+  switch (reason) {
+    case "named":
+      return `What was read: the reader named ${list} in the question, and the notes come from ${n === 1 ? "that book" : "those books"} only.`;
+    case "focus":
+      return `What was read: the reader has ${list} open, and the notes come from that book only.`;
+    case "picked":
+      return (
+        `What was read: the reader picked ${total} ${plural(total)} for this question. The notes come from ${n === total ? "all of them" : `${n} of them`}: ${list}.` +
+        (unread ? ` The other ${unread} were not read; say so if it matters to the answer.` : "")
+      );
+    case "series":
+      return (
+        `What was read: the reader has the series ${coverage.seriesName || "in focus"} open (${total} ${plural(total)}). The notes come from ${n === total ? "all of them" : `${n} of them`}: ${list}.` +
+        (unread
+          ? ` The other ${unread} were not read. Do not speak for the whole series: say which books you looked at, and if the question is about the whole story, end by offering to read the rest.`
+          : "")
+      );
+    default:
+      return (
+        `What was read: the reader asked their whole library (${total} ${plural(total)}) and named no book. ` +
+        `You chose the ${n} ${plural(n)} closest to the question: ${list}.` +
+        (unread
+          ? ` The other ${unread} were not read. The reader did not ask about these ${n} ${plural(n)} in particular, so never write "the books you're asking about" or "all ${n} books": say "in the ${n} ${plural(n)} I looked at" and name them. ` +
+            `If the question is about the whole story (does someone survive, how does it end, what happens to someone), say plainly that this is what those books show, and end with one short sentence offering to check the other books or a book the reader names.`
+          : "")
+      );
+  }
+}
+
 export async function orchestrateSpecialists(
   question: string,
   specialists: SpecialistAnswer[],
@@ -58,6 +111,8 @@ export async function orchestrateSpecialists(
     onToken?: (delta: string) => void;
     continuityHint?: string;
     signal?: AbortSignal;
+    /** What the notes cover; lets the answer say what it did and didn't read. */
+    coverage?: ReadingCoverage;
   }
 ): Promise<string> {
   if (isLibraryManagementInput(question)) {
@@ -82,6 +137,7 @@ export async function orchestrateSpecialists(
     `Include per-book findings, totals if numeric data exists, and explicit caveats. ` +
     `Do not invent facts not present in specialist payload.\n\n` +
     `If specialists disagree, add a clear "## Where the books disagree" section.\n` +
+    (opts?.coverage?.read.length ? `${coverageNote(opts.coverage)}\n\n` : "") +
     (opts?.continuityHint ? `${opts.continuityHint}\n\n` : "") +
     (personalityHint ? `Personality preferences:\n${personalityHint}\n\n` : "");
   const prompt = `User question: ${question}\n\nKnown disagreement notes:\n${disagreements.join("\n") || "(none)"}\n\nSpecialist outputs JSON:\n${payload}`;

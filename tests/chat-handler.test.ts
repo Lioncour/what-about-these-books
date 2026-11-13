@@ -863,6 +863,10 @@ describe("specialists + orchestrator", () => {
     expect(streamCalls()[0][4]).toBe("test-model");
     expect(logged("specialist_model_used")).toHaveLength(3);
     expect(streamCalls()[0][0]).toContain(`User question: ${QUESTION}`);
+    // The orchestrator is told what it is looking at: three of the four books, chosen for the reader.
+    expect(streamCalls()[0][5]?.system).toContain("asked their whole library (4 books) and named no book");
+    expect(streamCalls()[0][5]?.system).toContain("closest to the question: Iron Dawn, Silver Noon, Golden Dusk");
+    expect(streamCalls()[0][5]?.system).toContain("The other 1 were not read");
     expect(streamCalls()[0][0]).toContain(SPECIALIST_JSON.slice(1, 40));
   });
 
