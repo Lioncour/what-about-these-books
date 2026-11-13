@@ -23,13 +23,14 @@ export default function ChatHeader({
   onNewChat: () => void;
 }) {
   return (
-    <div className="flex items-start gap-3 px-6 py-3.5 sm:px-10 lg:px-14">
+    <div className="px-7 pb-5 pt-7 sm:px-12 lg:px-16">
+    <div className="mx-auto flex w-full max-w-3xl items-start gap-4">
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
           Companion notes
         </p>
         {focus ? (
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-2">
             <p className="truncate font-display text-lg font-semibold leading-snug sm:text-xl">
               {focus.title}
             </p>
@@ -51,7 +52,7 @@ export default function ChatHeader({
             </button>
           </div>
         ) : (
-          <p className="mt-1 font-display text-lg font-semibold leading-snug sm:text-xl">
+          <p className="mt-2 font-display text-lg font-semibold leading-snug sm:text-xl">
             {pickedCount && pickedCount >= 2
               ? `Across ${pickedCount} picked books`
               : bookCount > 0
@@ -90,6 +91,7 @@ export default function ChatHeader({
           Fresh page
         </button>
       </div>
+    </div>
     </div>
   );
 }

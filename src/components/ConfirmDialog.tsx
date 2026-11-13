@@ -45,11 +45,11 @@ export default function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-border bg-surface p-5 shadow-2xl shadow-black/40"
+        className="flex max-h-[80vh] w-full max-w-md flex-col rounded-3xl border border-border bg-surface p-8 shadow-2xl shadow-black/40"
       >
         <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto text-sm text-muted">{children}</div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-8 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}

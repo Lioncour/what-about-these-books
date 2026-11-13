@@ -24,21 +24,21 @@ export default function WelcomePanel({
 }) {
   const titlesPhrase = formatTitlesPhrase(recentTitles);
   return (
-    <div className="animate-rise-in py-8 sm:py-14">
+    <div className="animate-rise-in py-10 sm:py-16">
       {companionMode ? (
         <>
-          <BrandMark className="mb-7 h-14 w-14 opacity-90" />
+          <BrandMark className="mb-10 h-14 w-14 opacity-90" />
           <p className="max-w-2xl font-display text-[1.85rem] font-semibold leading-[1.2] tracking-tight sm:text-[2.15rem]">
             {bookCount > 0
               ? `Ready whenever you are — ${bookCount} book${bookCount === 1 ? "" : "s"} on the shelves.`
               : "Add a book on the left, then ask anything."}
           </p>
           {titlesPhrase && (
-            <p className="animate-rise-in stagger-1 mt-4 max-w-xl text-[15px] leading-relaxed text-muted">
+            <p className="animate-rise-in stagger-1 mt-6 max-w-xl text-[15px] leading-relaxed text-muted">
               Lately that includes {titlesPhrase}
             </p>
           )}
-          <div className="animate-rise-in stagger-2 mt-9 flex flex-col items-start gap-3">
+          <div className="animate-rise-in stagger-2 mt-12 flex flex-col items-start gap-4">
             {welcomeSuggestions(focusKind, bookCount, firstTitle).map((suggestion) => (
               <button
                 key={suggestion}

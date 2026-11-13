@@ -16,17 +16,18 @@ export default function PastNotes({
   onDelete: (id: string) => void;
 }) {
   return (
-    <div className="max-h-[22vh] overflow-y-auto border-y border-border/25 px-6 py-3 sm:px-10 lg:px-14">
+    <div className="max-h-[30vh] overflow-y-auto border-y border-border/25 px-7 py-5 sm:px-12 lg:px-16">
+      <div className="mx-auto w-full max-w-3xl">
       {chats.length === 0 ? (
         <p className="py-1 text-xs leading-relaxed text-muted">
           Conversations you start will land here.
         </p>
       ) : (
-        <div className="grid gap-0.5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-x-3 gap-y-1.5 sm:grid-cols-2 xl:grid-cols-3">
           {chats.slice(0, 20).map((chat) => (
             <div
               key={chat.id}
-              className={`group flex items-start gap-1 rounded-lg px-2.5 py-2 transition-colors ${
+              className={`group flex items-start gap-1 rounded-lg px-3 py-2.5 transition-colors ${
                 activeChatId === chat.id
                   ? "bg-primary/10 text-primary"
                   : "text-foreground hover:bg-surface-hover/80"
@@ -58,6 +59,7 @@ export default function PastNotes({
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

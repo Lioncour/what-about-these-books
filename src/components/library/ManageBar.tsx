@@ -23,8 +23,8 @@ export default function ManageBar({
   onMerge: (group: DuplicateGroup) => void;
 }) {
   return (
-    <div className="mb-3">
-      <div className="flex flex-wrap gap-2">
+    <div className="mb-6">
+      <div className="flex flex-wrap gap-2.5">
         <button onClick={onNewSeries} className={BUTTON}>
           + New series
         </button>

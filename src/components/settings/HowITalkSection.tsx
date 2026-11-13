@@ -5,13 +5,13 @@ import type { SectionProps } from "@/components/settings/types";
 /** Companion voice or raw answers. */
 export default function HowITalkSection({ settings, update }: SectionProps) {
   return (
-    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-7">
+    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-9">
       <h2 className="font-display text-base font-semibold">How I talk</h2>
       <p className="mt-1 text-sm text-muted">
         Companion mode feels like a friend who knows your books. Raw mode skips welcome, presence
         copy, and personality — just the answer.
       </p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
         <button
           type="button"
           onClick={() => update((p) => ({ ...p, companionMode: true }))}

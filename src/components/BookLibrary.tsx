@@ -25,7 +25,8 @@ export interface BookLibraryHandle {
   refresh: () => void;
 }
 
-const BOOK_GRID = "grid grid-cols-2 gap-5 sm:grid-cols-3";
+// As many columns as fit the rail (it is resizable), never so narrow that titles break mid-word.
+const BOOK_GRID = "grid grid-cols-[repeat(auto-fill,minmax(5.75rem,1fr))] gap-x-5 gap-y-7";
 
 const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(function BookLibrary(
   { onSelectBook, activeBookId, readOnly, onLibraryChanged, onBookEdited },
@@ -94,7 +95,7 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(function Boo
 
   return (
     <div>
-      <div className="mb-5 flex items-center justify-between gap-2 px-0.5">
+      <div className="mb-6 flex items-center justify-between gap-2 px-0.5">
         <div>
           <h2 className="text-[11px] font-medium tracking-wide text-muted">
             Your Library ({books.length})
@@ -125,20 +126,20 @@ const BookLibrary = forwardRef<BookLibraryHandle, BookLibraryProps>(function Boo
         />
       )}
       {books.length > 4 && (
-        <div className="mb-3">
+        <div className="mb-6">
           <input
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Search books..."
-            className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs outline-none transition-colors placeholder:text-muted focus:border-primary"
+            className="w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-[13px] outline-none transition-colors placeholder:text-muted focus:border-primary"
           />
         </div>
       )}
       {visibleSeries.map((s) => {
         const collapsed = !!collapsedSeries[s.id];
         return (
-          <div key={s.id} className="mb-4">
+          <div key={s.id} className="mb-9">
             <SeriesHeader
               name={s.name}
               count={s.books.length}

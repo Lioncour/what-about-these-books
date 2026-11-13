@@ -68,9 +68,9 @@ export default function Composer({
   }, [value]);
 
   return (
-    <div className="composer-shell relative z-20 shrink-0 px-6 pb-5 pt-3 sm:px-10 lg:px-14">
+    <div className="composer-shell relative z-20 shrink-0 px-7 pb-7 pt-5 sm:px-12 lg:px-16">
       {above && <div className="mx-auto w-full max-w-3xl">{above}</div>}
-      <div className="mx-auto flex w-full max-w-3xl items-end gap-3">
+      <div className="mx-auto flex w-full max-w-3xl items-end gap-4">
         <textarea
           ref={textareaRef}
           value={value}
@@ -86,7 +86,7 @@ export default function Composer({
           }}
           placeholder={placeholder}
           rows={2}
-          className="composer-field flex-1 resize-none rounded-none border-0 border-b border-border/50 bg-transparent px-0 py-2.5 text-base outline-none transition-colors placeholder:text-muted/80"
+          className="composer-field flex-1 resize-none rounded-none border-0 border-b border-border/50 bg-transparent px-0 py-3 text-base outline-none transition-colors placeholder:text-muted/80"
         />
         {isLoading ? (
           <button

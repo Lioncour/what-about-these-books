@@ -62,8 +62,8 @@ const MessageItem = memo(function MessageItem({
   return (
     <article className="animate-fade-in">
       {message.role === "user" ? (
-        <div className="border-b border-border/25 pb-7">
-          <p className={`mb-2 ${LABEL} text-muted/90`}>
+        <div className="border-b border-border/25 pb-9">
+          <p className={`mb-3 ${LABEL} text-muted/90`}>
             {message.label ? `You asked · ${message.label}` : "You asked"}
           </p>
           <p className="font-display text-xl leading-snug whitespace-pre-wrap sm:text-[1.35rem]">
@@ -72,7 +72,7 @@ const MessageItem = memo(function MessageItem({
         </div>
       ) : (
         <div>
-          <p className={`mb-3 ${LABEL} text-primary/80`}>From the pages</p>
+          <p className={`mb-5 ${LABEL} text-primary/80`}>From the pages</p>
           <div className="prose-ai text-[16px] sm:text-[17px]">
             <ChatMarkdown content={message.content} />
           </div>
@@ -80,13 +80,13 @@ const MessageItem = memo(function MessageItem({
       )}
 
       {(hasSources || message.scope || message.usage) && (
-        <div className="mt-5 space-y-4">
+        <div className="mt-10 space-y-7">
           {hasSources && (
             <SourcesList sources={message.sources ?? []} onOpenPassage={onOpenPassage} />
           )}
           {/* One quiet footer: where the answer came from, what else could be checked, what it took. */}
           {(message.scope || message.usage) && (
-            <footer className="space-y-1">
+            <footer className="space-y-2 border-t border-border/20 pt-5">
               {message.scope && (
                 <ScopeLine
                   scope={message.scope}
@@ -153,8 +153,8 @@ export default function MessageList({
   );
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-10 lg:px-14">
-      <div className="mx-auto w-full max-w-3xl space-y-11">
+    <div className="flex-1 overflow-y-auto px-7 pb-14 pt-8 sm:px-12 lg:px-16">
+      <div className="mx-auto w-full max-w-3xl space-y-20">
         {messages.length === 0 && welcome}
 
         {messages.map((message, i) => {
@@ -175,7 +175,7 @@ export default function MessageList({
         })}
 
         {waiting && (pendingScope || thinkingSteps.length > 0) && (
-          <div className="animate-fade-in space-y-2.5 border-l-2 border-accent/50 pl-4">
+          <div className="animate-fade-in space-y-3.5 border-l-2 border-accent/50 py-1 pl-5">
             {pendingScope && <ScopeLine scope={pendingScope} />}
             {thinkingSteps.length > 0 && (
               <>

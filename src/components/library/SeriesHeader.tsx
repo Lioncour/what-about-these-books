@@ -24,7 +24,7 @@ export default function SeriesHeader({
 }) {
   return (
     <div
-      className={`mb-2 flex cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 ${
+      className={`mb-4 flex cursor-pointer items-center justify-between rounded-lg px-2 py-2 ${
         active ? "bg-primary/10 text-primary" : "text-foreground hover:bg-surface-hover/70"
       }`}
       onClick={onSelect}

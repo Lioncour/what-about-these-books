@@ -39,11 +39,11 @@ export function SourcesList({
     }
   }
   return (
-    <div className="mt-1 space-y-2">
+    <div className="space-y-4">
       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">
         On the page
       </p>
-      <div className="flex flex-col items-start gap-1.5">
+      <div className="flex flex-col items-start gap-3">
         {merged.map(({ source, count }, i) => {
           const label = source.position
             ? `${source.book} · ${source.position}`
@@ -54,10 +54,10 @@ export function SourcesList({
               key={`${i}-${source.book}-${source.position || "ref"}`}
               type="button"
               onClick={() => onOpenPassage?.(source)}
-              className="group text-left text-[13px] text-muted transition-colors hover:text-foreground"
+              className="group text-left text-[13px] leading-relaxed text-muted transition-colors hover:text-foreground"
               title={snippet ? snippet.slice(0, 300) : "Open full passage"}
             >
-              <span className="mr-2 font-mono text-[11px] text-accent group-hover:text-primary">
+              <span className="mr-3 font-mono text-[11px] text-accent group-hover:text-primary">
                 {String(i + 1).padStart(2, "0")}
               </span>
               <span className="border-b border-transparent group-hover:border-primary/35">

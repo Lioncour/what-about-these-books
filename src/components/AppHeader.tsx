@@ -45,7 +45,7 @@ export default function AppHeader({
   }, []);
 
   return (
-    <header className="app-chrome-header flex shrink-0 items-center gap-3.5 border-b border-border/30 px-6 pb-2.5 pt-1 sm:gap-4 sm:px-8">
+    <header className="app-chrome-header flex shrink-0 items-center gap-4 border-b border-border/30 px-7 pb-4 pt-2 sm:gap-5 sm:px-10">
       <BrandMark className="h-11 w-11 shrink-0 sm:h-12 sm:w-12" />
       <div className="min-w-0 flex-1">
         <h1 className="font-display text-xl font-semibold tracking-tight sm:text-[1.65rem]">

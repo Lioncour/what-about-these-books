@@ -115,7 +115,7 @@ export default function AdvancedSection({
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
-    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-7">
+    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-9">
       <button
         type="button"
         onClick={() => setAdvancedOpen((v) => !v)}

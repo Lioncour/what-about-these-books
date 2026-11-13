@@ -15,7 +15,7 @@ export default function PersonalitySection({ settings, update }: SectionProps) {
   };
 
   return (
-    <section className="space-y-6 rounded-[1.75rem] border border-border/50 bg-surface p-7">
+    <section className="space-y-8 rounded-[1.75rem] border border-border/50 bg-surface p-9">
       <h2 className="font-display text-base font-semibold">Personality</h2>
       <div className={settings.companionMode === false ? "pointer-events-none opacity-40" : ""}>
         <label className="mb-1 block text-xs font-medium text-muted">Language</label>

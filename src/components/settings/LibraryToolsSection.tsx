@@ -8,7 +8,7 @@ export default function LibraryToolsSection() {
   const [workspaceNote, setWorkspaceNote] = useState("");
 
   return (
-    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-7">
+    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-9">
       <button
         type="button"
         onClick={() => setToolsOpen((v) => !v)}

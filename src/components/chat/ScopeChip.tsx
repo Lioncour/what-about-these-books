@@ -122,7 +122,7 @@ export default function ScopeChip({
   const limitNote = wholeSeries ? "" : pickedLimitNote(draft.length);
 
   return (
-    <div className="relative mb-1.5" ref={panelRef}>
+    <div className="relative mb-3" ref={panelRef}>
       <button
         type="button"
         onClick={() => (open ? setOpen(false) : openPicker())}
@@ -148,9 +148,9 @@ export default function ScopeChip({
           ref={dialogRef}
           role="dialog"
           aria-label="Choose which books to ask"
-          className="absolute bottom-full left-0 z-30 mb-2 flex max-h-[min(60vh,26rem)] w-[min(26rem,calc(100vw-3rem))] flex-col rounded-xl border border-border bg-surface shadow-2xl animate-fade-in"
+          className="absolute bottom-full left-0 z-30 mb-3 flex max-h-[min(64vh,30rem)] w-[min(28rem,calc(100vw-3rem))] flex-col rounded-2xl border border-border bg-surface shadow-2xl animate-fade-in"
         >
-          <div className="border-b border-border/70 px-3 py-2.5">
+          <div className="border-b border-border/70 px-5 py-4">
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">
               Ask which books?
             </p>
@@ -165,7 +165,7 @@ export default function ScopeChip({
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             {groups.length === 0 && (
               <p className="px-2 py-3 text-[13px] text-muted">No book matches that.</p>
             )}
@@ -173,7 +173,7 @@ export default function ScopeChip({
               const ids = group.books.map((b) => b.id);
               const allOn = ids.every((id) => draft.includes(id));
               return (
-                <div key={group.series || "standalone"} className="mb-1">
+                <div key={group.series || "standalone"} className="mb-3">
                   {group.series && (
                     <button
                       type="button"
@@ -192,7 +192,7 @@ export default function ScopeChip({
                     return (
                       <label
                         key={book.id}
-                        className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors hover:bg-surface-hover/70 ${
+                        className={`flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] transition-colors hover:bg-surface-hover/70 ${
                           on ? "text-foreground" : "text-muted"
                         }`}
                       >
@@ -217,7 +217,7 @@ export default function ScopeChip({
             </p>
           )}
           <div
-            className={`flex items-center gap-2 px-3 py-2.5 ${limitNote ? "" : "border-t border-border/70"}`}
+            className={`flex items-center gap-3 px-5 py-4 ${limitNote ? "" : "border-t border-border/70"}`}
           >
             <button
               type="button"

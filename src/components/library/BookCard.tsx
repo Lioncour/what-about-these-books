@@ -48,9 +48,9 @@ export default function BookCard({
           </svg>
         </div>
       )}
-      <div className="p-2.5">
+      <div className="space-y-1 px-3 pb-3.5 pt-3">
         {book.seriesOrder != null && (
-          <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/80">
             Book {book.seriesOrder}
           </p>
         )}

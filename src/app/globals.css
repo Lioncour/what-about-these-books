@@ -172,7 +172,7 @@ body {
 }
 
 .prose-ai {
-  line-height: 1.85;
+  line-height: 1.9;
   font-size: 1.02rem;
 }
 
@@ -185,8 +185,8 @@ body {
 .prose-ai h4 {
   font-family: var(--font-display), var(--font-body), ui-serif, Georgia, serif;
   font-weight: 600;
-  margin-top: 1.55em;
-  margin-bottom: 0.55em;
+  margin-top: 2.1em;
+  margin-bottom: 0.75em;
   line-height: 1.35;
   letter-spacing: -0.02em;
 }
@@ -203,13 +203,13 @@ body {
   font-weight: 500;
 }
 
-.prose-ai p { margin: 0.95em 0; }
+.prose-ai p { margin: 1.15em 0; }
 .prose-ai ul,
 .prose-ai ol {
-  margin: 0.85em 0;
-  padding-left: 1.45em;
+  margin: 1.1em 0;
+  padding-left: 1.5em;
 }
-.prose-ai li { margin: 0.5em 0; }
+.prose-ai li { margin: 0.7em 0; }
 .prose-ai li::marker { color: var(--primary); }
 .prose-ai strong {
   font-weight: 650;
@@ -221,8 +221,8 @@ body {
 }
 .prose-ai blockquote {
   border-left: 2px solid var(--accent);
-  margin: 1em 0;
-  padding: 0.25em 0 0.25em 1.1em;
+  margin: 1.5em 0;
+  padding: 0.35em 0 0.35em 1.3em;
   color: var(--muted);
   font-style: italic;
 }
@@ -237,7 +237,7 @@ body {
 .prose-ai hr {
   border: none;
   border-top: 1px solid var(--hairline);
-  margin: 1.25em 0;
+  margin: 2.4em 0;
 }
 .prose-ai-table-wrap {
   overflow-x: auto;
@@ -287,7 +287,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  row-gap: 0.15rem;
+  row-gap: 0.35rem;
   margin-left: -1.1em;
 }
 .dot-row > div > * {

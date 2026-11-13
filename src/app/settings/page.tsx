@@ -59,7 +59,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="app-chrome-header border-b border-border/50 bg-surface/90 px-6 pb-4 backdrop-blur">
+      <header className="app-chrome-header border-b border-border/50 bg-surface/90 px-8 pb-5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center gap-3">
           <Link
             href="/"
@@ -73,7 +73,7 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl space-y-10 px-8 py-12">
+      <main className="mx-auto max-w-2xl space-y-12 px-8 py-16">
         <HowITalkSection settings={settings} update={setSettings} />
         <TokenUsageSection />
         <PersonalitySection settings={settings} update={setSettings} />
@@ -85,7 +85,7 @@ export default function SettingsPage() {
         />
         <LibraryToolsSection />
 
-        <div className="flex justify-end gap-2 pb-10">
+        <div className="flex justify-end gap-3 pb-16">
           <Link
             href="/"
             className="rounded-xl border border-border px-4 py-2 text-sm text-muted hover:text-foreground"

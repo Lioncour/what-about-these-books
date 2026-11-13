@@ -123,11 +123,11 @@ export default function EditBookDialog({
         aria-modal="true"
         aria-label="Edit book"
         onSubmit={save}
-        className="flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-2xl shadow-black/40"
+        className="flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-3xl border border-border bg-surface p-8 shadow-2xl shadow-black/40"
       >
         <h3 className="font-display text-lg font-semibold tracking-tight">Edit book</h3>
 
-        <label className="mt-4 block text-xs font-medium text-muted">
+        <label className="mt-6 block text-xs font-medium text-muted">
           Title
           <input
             ref={titleRef}
@@ -148,7 +148,7 @@ export default function EditBookDialog({
           />
         </label>
 
-        <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">Cover</p>
+        <p className="mt-7 text-[11px] font-medium uppercase tracking-[0.14em] text-muted/90">Cover</p>
         <div className="mt-2 flex items-center gap-4">
           <div className="aspect-[2/3] w-20 shrink-0 overflow-hidden rounded-lg border border-border/60">
             {preview ? (
@@ -190,7 +190,7 @@ export default function EditBookDialog({
           </p>
         )}
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-8 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}

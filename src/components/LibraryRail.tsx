@@ -18,9 +18,10 @@ export default function LibraryRail({
     <>
       <aside
         className="flex shrink-0 flex-col border-r border-border/30 bg-surface/55"
-        style={{ width }}
+        // Never more than a third of a narrow window: the conversation is the main stage.
+        style={{ width, maxWidth: "max(260px, 34vw)" }}
       >
-        <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-3.5">
+        <div className="flex items-center justify-between gap-2 px-6 pb-3 pt-6">
           <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted/90">
             Shelves
           </p>
@@ -35,7 +36,7 @@ export default function LibraryRail({
             </svg>
           </button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto px-6 pb-8">
           {children}
         </div>
       </aside>

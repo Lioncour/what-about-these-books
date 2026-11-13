@@ -9,7 +9,7 @@ const LEGACY_SIDEBAR_COLLAPSED_KEY = "wab-sidebar-collapsed";
 const LEGACY_COMPANION_COLLAPSED_KEY = "wab-companion-collapsed";
 const LIBRARY_MIN = 260;
 const LIBRARY_MAX = 420;
-const LIBRARY_DEFAULT = 340;
+const LIBRARY_DEFAULT = 384;
 
 function clampLibraryWidth(width: number): number {
   return Math.min(LIBRARY_MAX, Math.max(LIBRARY_MIN, width));

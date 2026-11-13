@@ -85,7 +85,7 @@ export default function TokenUsageSection() {
   }, [loadUsage]);
 
   return (
-    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-7">
+    <section className="rounded-[1.75rem] border border-border/50 bg-surface p-9">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -101,13 +101,13 @@ export default function TokenUsageSection() {
       </button>
 
       {open && (
-        <div className="mt-4 space-y-4">
+        <div className="mt-6 space-y-7">
           {usageLoading && !usage ? (
             <p className="text-sm text-muted">Loading usage…</p>
           ) : usage ? (
             <>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="rounded-xl border border-border bg-background px-3 py-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
                   <p className="text-[11px] uppercase tracking-wide text-muted">All time</p>
                   <p className="mt-1 font-display text-xl font-semibold tabular-nums">
                     {formatTokens(usage.totals.claudeTokens + usage.totals.embeddingTokens)}
@@ -124,7 +124,7 @@ export default function TokenUsageSection() {
                     </p>
                   )}
                 </div>
-                <div className="rounded-xl border border-border bg-background px-3 py-3">
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
                   <p className="text-[11px] uppercase tracking-wide text-muted">Today</p>
                   <p className="mt-1 font-display text-xl font-semibold tabular-nums">
                     {formatTokens(usage.today.claudeTokens + usage.today.embeddingTokens)}
@@ -133,7 +133,7 @@ export default function TokenUsageSection() {
                     {usage.today.claudeCalls} Claude · {usage.today.embeddingCalls} embed
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-background px-3 py-3">
+                <div className="rounded-xl border border-border bg-background px-4 py-4">
                   <p className="text-[11px] uppercase tracking-wide text-muted">Last 7 days</p>
                   <p className="mt-1 font-display text-xl font-semibold tabular-nums">
                     {formatTokens(
@@ -149,12 +149,12 @@ export default function TokenUsageSection() {
 
               {usage.byModel.length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-medium text-muted">By model</p>
-                  <ul className="space-y-1.5">
+                  <p className="mb-3 text-xs font-medium text-muted">By model</p>
+                  <ul className="space-y-2">
                     {usage.byModel.slice(0, 6).map((row) => (
                       <li
                         key={`${row.kind}:${row.modelId}`}
-                        className="flex items-baseline justify-between gap-3 rounded-lg border border-border/70 px-3 py-2 text-xs"
+                        className="flex items-baseline justify-between gap-3 rounded-lg border border-border/70 px-3.5 py-2.5 text-xs"
                       >
                         <span className="min-w-0 truncate text-muted">
                           <span className="text-foreground">{row.kind}</span> ·{" "}
@@ -174,7 +174,7 @@ export default function TokenUsageSection() {
 
               {usage.recent.length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-medium text-muted">Recent calls</p>
+                  <p className="mb-3 text-xs font-medium text-muted">Recent calls</p>
                   <ul className="max-h-40 space-y-1 overflow-y-auto text-xs text-muted">
                     {usage.recent.slice(0, 12).map((ev) => (
                       <li key={ev.id} className="flex justify-between gap-2 tabular-nums">

@@ -55,10 +55,10 @@ export default function AskDialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl shadow-black/40"
+        className="w-full max-w-md rounded-3xl border border-border bg-surface p-8 shadow-2xl shadow-black/40"
       >
         <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
-        <label className="mt-4 block text-xs font-medium text-muted">{label}</label>
+        <label className="mt-6 block text-xs font-medium text-muted">{label}</label>
         <input
           key={`${title}|${initialValue}`}
           ref={inputRef}
@@ -72,7 +72,7 @@ export default function AskDialog({
           placeholder={placeholder}
           className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted/70 focus:border-primary"
         />
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-8 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
