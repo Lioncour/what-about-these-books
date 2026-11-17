@@ -12,7 +12,7 @@ export default function AwsStatusBadge() {
     if (!opts?.silent) setStatus(opts?.forceLogin ? "logging-in" : "checking");
     try {
       const res = await fetch(
-        opts?.forceLogin ? "/api/aws-status" : "/api/aws-status",
+        "/api/aws-status",
         opts?.forceLogin
           ? { method: "POST" }
           : { method: "GET", cache: "no-store" }
@@ -43,9 +43,10 @@ export default function AwsStatusBadge() {
   }, []);
 
   useEffect(() => {
-    // Warm credentials as soon as the UI loads
+    // Show the state as soon as the UI loads
     const initial = window.setTimeout(() => void refresh({ silent: true }), 0);
-    // Keepalive: every 10 minutes, re-check and auto SSO-login if expired
+    // Every 10 minutes, re-check. This only reports: signing in happens on a
+    // click here or when a request needs Bedrock, never from a background poll.
     const id = window.setInterval(() => void refresh({ silent: true }), 10 * 60 * 1000);
     return () => {
       window.clearTimeout(initial);

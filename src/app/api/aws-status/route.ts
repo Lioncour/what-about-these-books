@@ -2,10 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureAwsCredentials } from "@/lib/bedrock-client";
 import { publicModeBlocked } from "@/lib/api-guard";
 
+/**
+ * Report the AWS state. A plain GET never opens a login (the badge polls it in
+ * the background); `?login=1` signs in if the session has expired, `?force=1`
+ * always does.
+ */
 export async function GET(request: NextRequest) {
   const force = request.nextUrl.searchParams.get("force") === "1";
+  const login = request.nextUrl.searchParams.get("login") === "1";
   try {
-    const status = await ensureAwsCredentials({ forceLogin: force });
+    const status = await ensureAwsCredentials({ forceLogin: force, checkOnly: !login });
     if (!status.ok) {
       return NextResponse.json(status, { status: 503 });
     }

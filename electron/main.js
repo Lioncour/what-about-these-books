@@ -423,7 +423,7 @@ async function startApp() {
   // run: a test must never open a login page.
   if (!process.env.WABT_SMOKE) {
     http
-      .get(`http://127.0.0.1:${PORT}/api/aws-status`, (res) => {
+      .get(`http://127.0.0.1:${PORT}/api/aws-status?login=1`, (res) => {
         res.resume();
       })
       .on("error", () => {});

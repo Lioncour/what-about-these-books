@@ -119,11 +119,15 @@ export type AwsCredentialStatus = {
 
 /**
  * Verify AWS creds. When missing/expired, run `aws sso login` (opens browser once).
- * Pass forceLogin to always open SSO login.
+ * Pass forceLogin to always open SSO login. Pass checkOnly to report the state
+ * without ever opening a login: background polls must use it, or an expired
+ * session opens a new browser tab on every poll while nobody is there to sign in.
  */
 export async function ensureAwsCredentials(opts?: {
   forceLogin?: boolean;
+  checkOnly?: boolean;
 }): Promise<AwsCredentialStatus> {
+  const checkOnly = !!opts?.checkOnly && !opts?.forceLogin;
   const profile = process.env.AWS_PROFILE?.trim() || "default";
   const region = AWS_REGION;
   const now = Date.now();
@@ -190,6 +194,28 @@ export async function ensureAwsCredentials(opts?: {
       };
     }
 
+    if (checkOnly) {
+      return {
+        ok: false,
+        profile,
+        region,
+        loginAttempted,
+        error: "AWS session expired or not signed in. Click to sign in.",
+      };
+    }
+
+    // The forced login above went through and the identity still fails: a
+    // second browser login would not change that.
+    if (loginAttempted) {
+      return {
+        ok: false,
+        profile,
+        region,
+        loginAttempted,
+        error: check.message || "AWS credentials still unavailable after SSO login",
+      };
+    }
+
     // Any other identity failure → try SSO login (session may have expired quietly)
     loginAttempted = true;
     logChatEvent("aws_sso_login_proactive", { reason: check.message.slice(0, 300) });
@@ -238,7 +264,9 @@ export async function ensureAwsCredentials(opts?: {
       ensureCredentialsInFlight = null;
     }
   });
-  if (!opts?.forceLogin) {
+  // A check-only run is not shared: a caller that needs a login must not be
+  // handed its "expired" answer.
+  if (!opts?.forceLogin && !checkOnly) {
     ensureCredentialsInFlight = pending;
   }
   return pending;
